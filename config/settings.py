@@ -54,8 +54,8 @@ class LogLevel(str, Enum):
 class ExchangeConfig(BaseModel):
     """MEXC exchange configuration."""
 
-    access_key: str = Field(..., description="MEXC API access key")
-    secret_key: str = Field(..., description="MEXC API secret key")
+    access_key: str = Field(..., alias='MEXC_ACCESS_KEY', description="MEXC API access key")
+    secret_key: str = Field(..., alias='MEXC_SECRET_KEY', description="MEXC API secret key")
     base_url: str = Field(default="https://api.mexc.com", description="MEXC API base URL")
     futures_base_url: str = Field(default="https://contract.mexc.com", description="MEXC futures API base URL")
     testnet: bool = Field(default=True, description="Use testnet environment")
