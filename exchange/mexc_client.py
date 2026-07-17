@@ -78,7 +78,7 @@ class MEXCContractInfo:
             tick_size=float(data.get("tickSize", 0.01)),
             min_order_size=float(data.get("minOrderSize", 0.01)),
             max_leverage=int(data.get("maxLeverage", 125)),
-            status=data.get("state", data.get("status", "")),
+            status=str(data.get("state", data.get("status", ""))).upper(),
             margin_asset=data.get("settleCoin", data.get("quoteCoin", "USDT")),
         )
 
@@ -313,7 +313,7 @@ class MEXCClient:
         contracts = []
         for item in data:
             contract = MEXCContractInfo.from_api_response(item)
-            if contract.margin_asset == "USDT" and contract.status.upper() in ("ONLINE", "ENABLED", "TRADING", ""):
+            if contract.margin_asset.upper() == "USDT" and contract.status in ("ONLINE", "ENABLED", "TRADING", "1", "TRUE", ""):
                 contracts.append(contract)
         logger.info(f"Discovered {len(contracts)} active USDT-M perpetual contracts")
         return contracts

@@ -71,7 +71,7 @@ class TelegramBot:
 
     async def initialize(self) -> None:
         """Initialize the Telegram bot."""
-        self.application = Application.builder().token(self.config.bot_token).build()
+        self.application = Application.builder().token(self.config.bot_token).drop_pending_updates(True).build()
 
         # Register command handlers
         self.application.add_handler(CommandHandler("start", self._cmd_start))
