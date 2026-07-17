@@ -771,8 +771,8 @@ class AxionQuant:
                 "high": np.random.randn(100).cumsum() + 102,
                 "low": np.random.randn(100).cumsum() + 98,
                 "close": np.random.randn(100).cumsum() + 100,
-                "volume": np.random.randint(1000, 10000, 100),
-            })
+                "volume": np.random.randint(1000, 10000, 100).astype(float),
+            }, index=pd.date_range(start="2024-01-01", periods=100, freq="1h"))
 
             engine = IndicatorEngine()
             results_data = engine.calculate_all(test_data)
