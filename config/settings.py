@@ -568,14 +568,14 @@ class AppConfig(BaseSettings):
     log_level: LogLevel = Field(default=LogLevel.INFO)
 
     # Sub-configurations
-    exchange: ExchangeConfig = Field(default_factory=ExchangeConfig)
+    exchange: ExchangeConfig = Field(default=None)
     market_data: MarketDataConfig = Field(default_factory=MarketDataConfig)
     indicators: IndicatorConfig = Field(default_factory=IndicatorConfig)
     smc: SMCConfig = Field(default_factory=SMCConfig)
     ml: MLConfig = Field(default_factory=MLConfig)
     signals: SignalConfig = Field(default_factory=SignalConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
-    telegram: TelegramConfig = Field(default_factory=TelegramConfig)
+    telegram: TelegramConfig = Field(default=None)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     backtest: BacktestConfig = Field(default_factory=BacktestConfig)
     paper_trading: PaperTradingConfig = Field(default_factory=PaperTradingConfig)
@@ -593,6 +593,21 @@ class AppConfig(BaseSettings):
     # Performance
     max_workers: int = Field(default=4, ge=1, le=16)
     analysis_timeout_ms: int = Field(default=500, ge=100, le=5000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def load_sub_configs(cls, values):
+        import os
+        values["exchange"] = {
+            "access_key": os.environ.get("MEXC_ACCESS_KEY", ""),
+            "secret_key": os.environ.get("MEXC_SECRET_KEY", ""),
+        }
+        values["telegram"] = {
+            "bot_token": os.environ.get("TELEGRAM_BOT_TOKEN", ""),
+            "admin_chat_id": os.environ.get("TELEGRAM_ADMIN_CHAT_ID", ""),
+            "channel_id": os.environ.get("TELEGRAM_CHANNEL_ID", ""),
+        }
+        return values
 
     @model_validator(mode="after")
     def validate_paths(self) -> "AppConfig":
