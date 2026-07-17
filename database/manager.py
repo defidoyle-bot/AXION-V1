@@ -192,7 +192,7 @@ class HealthMetric(Base):
     status = Column(String(20), nullable=False)
     latency_ms = Column(Float, nullable=True)
     error_count = Column(Integer, default=0)
-    extra_data = Column(JSON, nullable=True)
+    extra_data = Column(JSON, nullable=True)  # renamed: "metadata" is reserved by SQLAlchemy
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

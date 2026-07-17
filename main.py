@@ -589,7 +589,7 @@ class AxionQuant:
         """Initialize all modules."""
         logger.info(
             f"Initializing AXION QUANT V4 "
-            f"[profile={self.config.signal.strategy_profile.value}]..."
+            f"[profile={self.config.signals.strategy_profile.value}]..."
         )
         profile_desc = self.profile_manager.describe_active_profile()
         logger.info(f"Strategy profile: {profile_desc}")

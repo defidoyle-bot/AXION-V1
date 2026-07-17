@@ -198,27 +198,28 @@ class SymbolScanner:
     async def _fetch_all_contracts(self) -> List[SymbolInfo]:
         """Retrieve all futures contract definitions from MEXC via the exchange client."""
         try:
-            markets = await self._client.get_futures_markets()
+            markets = await self._client.get_contracts()
         except Exception as exc:
             raise RuntimeError(f"MEXC markets fetch failed: {exc}") from exc
 
         symbol_infos: List[SymbolInfo] = []
         for m in markets:
             try:
+                # m is a MEXCContractInfo dataclass
                 info = SymbolInfo(
-                    symbol=m.get("symbol", ""),
-                    base_asset=m.get("baseCoin", m.get("base", "")),
-                    quote_asset=m.get("quoteCoin", m.get("quote", "USDT")),
-                    contract_type=m.get("contractType", m.get("type", "PERPETUAL")).upper(),
-                    status=m.get("status", m.get("state", "TRADING")).upper(),
-                    tick_size=float(m.get("priceUnit", m.get("tickSize", 0.01))),
-                    lot_size=float(m.get("volUnit", m.get("lotSize", 0.001))),
-                    min_qty=float(m.get("minVol", m.get("minQty", 1))),
-                    max_leverage=int(m.get("maxLeverage", 100)),
+                    symbol=m.symbol,
+                    base_asset=m.base_asset,
+                    quote_asset=m.quote_asset,
+                    contract_type="PERPETUAL",  # get_contracts() only returns perpetuals
+                    status=m.status.upper() if m.status else "TRADING",
+                    tick_size=m.tick_size,
+                    lot_size=m.min_order_size,
+                    min_qty=m.min_order_size,
+                    max_leverage=m.max_leverage,
                 )
                 if info.symbol:
                     symbol_infos.append(info)
-            except (KeyError, ValueError, TypeError) as exc:
+            except (AttributeError, ValueError, TypeError) as exc:
                 logger.debug(f"Scanner: skipped malformed contract entry: {exc}")
 
         return symbol_infos
@@ -242,10 +243,12 @@ class SymbolScanner:
                 # Conservative: exclude symbols whose ticker cannot be fetched
                 continue
 
-            vol_24h = float(ticker.get("volume24", ticker.get("quoteVolume", 0)))
-            oi = float(ticker.get("openInterest", ticker.get("holdVol", 0)))
-            bid = float(ticker.get("bid1", ticker.get("bid", 0)))
-            ask = float(ticker.get("ask1", ticker.get("ask", 0)))
+            # ticker is List[MEXCTicker] - get first item for this symbol
+            t = ticker[0] if isinstance(ticker, list) and ticker else ticker
+            vol_24h = float(t.volume_24h) if hasattr(t, "volume_24h") else 0
+            oi = float(t.open_interest) if hasattr(t, "open_interest") else 0
+            bid = float(t.bid_price) if hasattr(t, "bid_price") else 0
+            ask = float(t.ask_price) if hasattr(t, "ask_price") else 0
             spread = (ask - bid) / bid if bid > 0 else 999
 
             # Volume filter

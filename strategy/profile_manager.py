@@ -189,12 +189,12 @@ class ProfileManager:
 
     @property
     def active_profile(self) -> StrategyProfile:
-        return self._base_config.signal.strategy_profile
+        return self._base_config.signals.strategy_profile
 
     def apply(self, config: Optional[AppConfig] = None) -> AppConfig:
         """Return a deep-copy of the config with profile overrides applied."""
         base = deepcopy(config or self._base_config)
-        profile = base.signal.strategy_profile
+        profile = base.signals.strategy_profile
         overrides = PROFILES.get(profile)
 
         if overrides is None:
@@ -241,25 +241,25 @@ class ProfileManager:
         threshold_updates = {
             "watchlist_threshold": max(
                 50,
-                min(70, base.signal.watchlist_threshold + overrides.watchlist_threshold_delta),
+                min(70, base.signals.watchlist_threshold + overrides.watchlist_threshold_delta),
             ),
             "standard_threshold": max(
                 60,
-                min(80, base.signal.standard_threshold + overrides.standard_threshold_delta),
+                min(80, base.signals.standard_threshold + overrides.standard_threshold_delta),
             ),
             "strong_threshold": max(
                 70,
-                min(90, base.signal.strong_threshold + overrides.strong_threshold_delta),
+                min(90, base.signals.strong_threshold + overrides.strong_threshold_delta),
             ),
             "premium_threshold": max(
                 80,
-                min(95, base.signal.premium_threshold + overrides.premium_threshold_delta),
+                min(95, base.signals.premium_threshold + overrides.premium_threshold_delta),
             ),
             "institutional_grade_threshold": max(
                 90,
                 min(
                     100,
-                    base.signal.institutional_grade_threshold
+                    base.signals.institutional_grade_threshold
                     + overrides.institutional_grade_threshold_delta,
                 ),
             ),
@@ -267,7 +267,7 @@ class ProfileManager:
 
         # Build new signal config via model_copy (Pydantic v2)
         try:
-            base.signal = base.signal.model_copy(
+            base.signals = base.signals.model_copy(
                 update={**signal_updates, **threshold_updates}
             )
         except Exception as exc:
@@ -288,7 +288,7 @@ class ProfileManager:
         # Apply minimum R:R to risk config
         try:
             base.risk = base.risk.model_copy(
-                update={"min_risk_reward_ratio": overrides.min_risk_reward}
+                update={"min_risk_reward": overrides.min_risk_reward}
             )
         except Exception as exc:
             logger.warning(f"ProfileManager: could not update risk min_rr: {exc}")
