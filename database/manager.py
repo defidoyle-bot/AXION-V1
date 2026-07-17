@@ -192,7 +192,7 @@ class HealthMetric(Base):
     status = Column(String(20), nullable=False)
     latency_ms = Column(Float, nullable=True)
     error_count = Column(Integer, default=0)
-    metadata = Column(JSON, nullable=True)
+    extra_data = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -548,7 +548,7 @@ class DatabaseManager:
                 status=metric["status"],
                 latency_ms=metric.get("latency_ms"),
                 error_count=metric.get("error_count", 0),
-                metadata=metric.get("metadata"),
+                extra_data=metric.get("metadata"),
             )
             session.add(db_health)
             await session.commit()
