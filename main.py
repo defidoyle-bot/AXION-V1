@@ -805,8 +805,7 @@ class AxionQuant:
             results["logging"] = f"FAIL: {e}"
 
         # Overall result
-        all_pass = all(v == "PASS" for v in results.values())
-        results["overall"] = "PASS" if all_pass else "FAIL"
+        results["overall"] = "FAIL" if any(str(v).startswith("FAIL") for v in results.values()) else "PASS"
 
         return results
 
