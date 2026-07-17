@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Union
 import structlog
 from pythonjsonlogger import jsonlogger
 
-from config.settings import get_config, LogLevel
+from config.settings import get_config, LogLevel, Environment
 
 
 # =============================================================================
