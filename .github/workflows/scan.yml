@@ -1,0 +1,63 @@
+name: AXION Quant - Hourly Market Scan
+
+on:
+  schedule:
+    # Run every hour at minute 0
+    - cron: '0 * * * *'
+  workflow_dispatch:
+    # Allow manual trigger from GitHub UI
+
+jobs:
+  market-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Create .env file from secrets
+        run: |
+          cat << EOF > .env
+          MEXC_ACCESS_KEY=${{ secrets.MEXC_ACCESS_KEY }}
+          MEXC_SECRET_KEY=${{ secrets.MEXC_SECRET_KEY }}
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_ADMIN_CHAT_ID=${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
+          TELEGRAM_CHANNEL_ID=${{ secrets.TELEGRAM_CHANNEL_ID }}
+          ENVIRONMENT=production
+          LOG_LEVEL=INFO
+          STRATEGY_PROFILE=intraday
+          RISK_PROFILE=balanced
+          PAPER_TRADING=true
+          EOF
+
+      - name: Run self-test
+        run: |
+          python main.py --self-test
+        continue-on-error: true
+
+      - name: Run market scan
+        run: |
+          timeout 600 python main.py --mode paper || true
+        env:
+          MEXC_ACCESS_KEY: ${{ secrets.MEXC_ACCESS_KEY }}
+          MEXC_SECRET_KEY: ${{ secrets.MEXC_SECRET_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+
+      - name: Clean up secrets
+        if: always()
+        run: |
+          rm -f .env
