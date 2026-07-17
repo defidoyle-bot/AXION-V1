@@ -98,8 +98,8 @@ class MarketDataConfig(BaseModel):
     higher_timeframe: Timeframe = Field(default=Timeframe.H4, description="Higher timeframe for trend context")
     lower_timeframe: Timeframe = Field(default=Timeframe.M15, description="Lower timeframe for entry precision")
 
-    min_24h_volume_usdt: float = Field(default=1_000_000, ge=0, description="Minimum 24h volume in USDT")
-    min_open_interest_usdt: float = Field(default=500_000, ge=0, description="Minimum open interest in USDT")
+    min_24h_volume_usdt: float = Field(default=0, ge=0, description="Minimum 24h volume in USDT")
+    min_open_interest_usdt: float = Field(default=0, ge=0, description="Minimum open interest in USDT")
     max_spread_percent: float = Field(default=0.5, ge=0, le=10, description="Maximum spread percentage")
     min_liquidity_score: float = Field(default=0.3, ge=0, le=1, description="Minimum liquidity score")
     min_avg_daily_trades: int = Field(default=1000, ge=0, description="Minimum average daily trades")
@@ -296,11 +296,11 @@ class SignalConfig(BaseModel):
     trade_quality_bonus_weight: int = Field(default=5, ge=0, le=20)
 
     # Score thresholds
-    institutional_grade_threshold: int = Field(default=95, ge=90, le=100)
-    premium_threshold: int = Field(default=90, ge=80, le=95)
-    strong_threshold: int = Field(default=80, ge=70, le=90)
-    standard_threshold: int = Field(default=70, ge=60, le=80)
-    watchlist_threshold: int = Field(default=60, ge=50, le=70)
+    institutional_grade_threshold: int = Field(default=85, ge=50, le=100)
+    premium_threshold: int = Field(default=72, ge=50, le=95)
+    strong_threshold: int = Field(default=62, ge=50, le=90)
+    standard_threshold: int = Field(default=55, ge=50, le=80)
+    watchlist_threshold: int = Field(default=50, ge=50, le=70)
 
     # Adaptive thresholds
     adaptive_scoring_enabled: bool = Field(default=True)
