@@ -36,7 +36,7 @@ from analysis.smc.engine import SMCEngine, SMCAnalysis
 from ml.engine import MLEngine, MLPrediction
 from signal_engine.engine import SignalScoringEngine, SignalScore, TradingSignal
 from risk.engine import RiskManagementEngine, RiskAssessment
-from telegram.bot import TelegramBot
+from notifications.bot import TelegramBot
 from database.manager import DatabaseManager
 from backtesting.engine import BacktestEngine
 from backtesting.paper_trading import PaperTradingEngine
