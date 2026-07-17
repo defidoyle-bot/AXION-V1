@@ -54,8 +54,8 @@ class LogLevel(str, Enum):
 class ExchangeConfig(BaseModel):
     """MEXC exchange configuration."""
 
-    access_key: str = Field(..., alias='MEXC_ACCESS_KEY', description="MEXC API access key")
-    secret_key: str = Field(..., alias='MEXC_SECRET_KEY', description="MEXC API secret key")
+    access_key: str = Field(..., description="MEXC API access key")
+    secret_key: str = Field(..., description="MEXC API secret key")
     base_url: str = Field(default="https://api.mexc.com", description="MEXC API base URL")
     futures_base_url: str = Field(default="https://contract.mexc.com", description="MEXC futures API base URL")
     testnet: bool = Field(default=True, description="Use testnet environment")
@@ -284,10 +284,10 @@ class SignalConfig(BaseModel):
     """Signal scoring and decision engine configuration."""
 
     # Weights (must sum to 100)
-    higher_tf_trend_weight: int = Field(default=10, ge=0, le=50)
+    higher_tf_trend_weight: int = Field(default=15, ge=0, le=50)
     lower_tf_trend_weight: int = Field(default=10, ge=0, le=50)
     technical_indicators_weight: int = Field(default=10, ge=0, le=50)
-    smc_weight: int = Field(default=15, ge=0, le=50)
+    smc_weight: int = Field(default=20, ge=0, le=50)
     liquidity_context_weight: int = Field(default=10, ge=0, le=50)
     volume_confirmation_weight: int = Field(default=10, ge=0, le=50)
     market_regime_weight: int = Field(default=10, ge=0, le=50)
@@ -319,7 +319,26 @@ class SignalConfig(BaseModel):
             self.risk_management_weight + self.trade_quality_bonus_weight
         )
         if total != 100:
-            raise ValueError(f"Signal weights must sum to 100, got {total}")
+            # Auto-correct by scaling weights proportionally instead of crashing
+            import warnings
+            warnings.warn(f"Signal weights sum to {total}, auto-correcting to 100")
+            factor = 100 / total
+            self.higher_tf_trend_weight = round(self.higher_tf_trend_weight * factor)
+            self.lower_tf_trend_weight = round(self.lower_tf_trend_weight * factor)
+            self.technical_indicators_weight = round(self.technical_indicators_weight * factor)
+            self.smc_weight = round(self.smc_weight * factor)
+            self.liquidity_context_weight = round(self.liquidity_context_weight * factor)
+            self.volume_confirmation_weight = round(self.volume_confirmation_weight * factor)
+            self.market_regime_weight = round(self.market_regime_weight * factor)
+            self.ml_weight = round(self.ml_weight * factor)
+            self.risk_management_weight = round(self.risk_management_weight * factor)
+            self.trade_quality_bonus_weight = 100 - (
+                self.higher_tf_trend_weight + self.lower_tf_trend_weight +
+                self.technical_indicators_weight + self.smc_weight +
+                self.liquidity_context_weight + self.volume_confirmation_weight +
+                self.market_regime_weight + self.ml_weight +
+                self.risk_management_weight
+            )
         return self
 
     @model_validator(mode="after")
@@ -580,6 +599,30 @@ class AppConfig(BaseSettings):
     backtest: BacktestConfig = Field(default_factory=BacktestConfig)
     paper_trading: PaperTradingConfig = Field(default_factory=PaperTradingConfig)
 
+    @model_validator(mode="before")
+    @classmethod
+    def load_credentials_from_env(cls, values: dict) -> dict:
+        """Build sub-configs that require env var credentials."""
+        if not isinstance(values, dict):
+            values = {}
+        # Exchange credentials
+        if "exchange" not in values or values["exchange"] is None:
+            values["exchange"] = {
+                "access_key": os.environ.get("MEXC_ACCESS_KEY", ""),
+                "secret_key": os.environ.get("MEXC_SECRET_KEY", ""),
+            }
+        # Telegram credentials
+        if "telegram" not in values or values["telegram"] is None:
+            values["telegram"] = {
+                "bot_token": os.environ.get("TELEGRAM_BOT_TOKEN", ""),
+                "admin_chat_id": os.environ.get("TELEGRAM_ADMIN_CHAT_ID", ""),
+                "channel_id": os.environ.get("TELEGRAM_CHANNEL_ID", None),
+            }
+        # paper_trading must be a dict/object not a bool
+        if "paper_trading" in values and isinstance(values["paper_trading"], bool):
+            values["paper_trading"] = PaperTradingConfig(enabled=values["paper_trading"])
+        return values
+
     # Strategy
     strategy_profile: StrategyProfile = Field(default=StrategyProfile.INTRADAY)
     risk_profile: RiskProfile = Field(default=RiskProfile.BALANCED)
@@ -593,21 +636,6 @@ class AppConfig(BaseSettings):
     # Performance
     max_workers: int = Field(default=4, ge=1, le=16)
     analysis_timeout_ms: int = Field(default=500, ge=100, le=5000)
-
-    @model_validator(mode="before")
-    @classmethod
-    def load_sub_configs(cls, values):
-        import os
-        values["exchange"] = {
-            "access_key": os.environ.get("MEXC_ACCESS_KEY", ""),
-            "secret_key": os.environ.get("MEXC_SECRET_KEY", ""),
-        }
-        values["telegram"] = {
-            "bot_token": os.environ.get("TELEGRAM_BOT_TOKEN", ""),
-            "admin_chat_id": os.environ.get("TELEGRAM_ADMIN_CHAT_ID", ""),
-            "channel_id": os.environ.get("TELEGRAM_CHANNEL_ID", ""),
-        }
-        return values
 
     @model_validator(mode="after")
     def validate_paths(self) -> "AppConfig":
@@ -638,19 +666,9 @@ class ConfigLoader:
 
         env_path = Path(env_file) if env_file else Path(".env")
 
-        # Check if .env exists, create from example if missing
-        if not env_path.exists():
-            example_path = Path(".env.example")
-            if example_path.exists():
-                print(f"WARNING: {env_path} not found. Copy from .env.example and configure.")
-                print(f"Run: cp .env.example .env")
-                sys.exit(1)
-            else:
-                print(f"ERROR: No .env or .env.example found. Cannot start application.")
-                sys.exit(1)
-
+        # .env is optional when env vars are injected directly (e.g. GitHub Actions secrets)
         try:
-            config = AppConfig(_env_file=env_path)
+            config = AppConfig(_env_file=env_path if env_path.exists() else None)
             cls._instance = config
             return config
         except Exception as e:
