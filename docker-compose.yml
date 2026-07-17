@@ -1,0 +1,45 @@
+version: "3.8"
+
+services:
+  axion-quant:
+    build: .
+    container_name: axion-quant-v4
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./models:/app/models
+    environment:
+      - APP_ENV=production
+      - LOG_LEVEL=INFO
+    networks:
+      - axion-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: PostgreSQL for production
+  # postgres:
+  #   image: postgres:15-alpine
+  #   container_name: axion-postgres
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_USER: axion
+  #     POSTGRES_PASSWORD: ${DB_PASSWORD}
+  #     POSTGRES_DB: axion_quant
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   networks:
+  #     - axion-network
+
+networks:
+  axion-network:
+    driver: bridge
+
+# volumes:
+#   postgres_data:
