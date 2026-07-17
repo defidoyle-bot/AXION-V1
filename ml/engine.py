@@ -9,7 +9,7 @@ import json
 import pickle
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -132,45 +132,55 @@ class FeatureEngineer:
         self, features: pd.DataFrame, df: pd.DataFrame, indicators: Dict[str, Any]
     ) -> pd.DataFrame:
         """Add technical indicator features."""
+        # Convert indicators to Series if they are dicts
+        processed_indicators = {}
+        for k, v in indicators.items():
+            if isinstance(v, dict):
+                # Handle dict from results.to_dict() which might be {index: value}
+                processed_indicators[k] = pd.Series(v, index=df.index)
+            else:
+                processed_indicators[k] = pd.Series(v, index=df.index)
+
         # Price relative to EMAs
         for period in [9, 21, 50, 200]:
             ema_key = f"ema_{period}"
-            if ema_key in indicators:
-                features[f"price_above_ema_{period}"] = (df["close"] > indicators[ema_key]).astype(int)
-                features[f"distance_from_ema_{period}"] = (df["close"] - indicators[ema_key]) / indicators[ema_key]
+            if ema_key in processed_indicators:
+                features[f"price_above_ema_{period}"] = (df["close"] > processed_indicators[ema_key]).astype(int)
+                features[f"distance_from_ema_{period}"] = (df["close"] - processed_indicators[ema_key]) / processed_indicators[ema_key]
 
         # RSI features
-        if "rsi" in indicators:
-            features["rsi"] = indicators["rsi"]
-            features["rsi_overbought"] = (indicators["rsi"] > 70).astype(int)
-            features["rsi_oversold"] = (indicators["rsi"] < 30).astype(int)
-            features["rsi_slope"] = indicators["rsi"].diff(3)
+        if "rsi" in processed_indicators:
+            features["rsi"] = processed_indicators["rsi"]
+            features["rsi_overbought"] = (processed_indicators["rsi"] > 70).astype(int)
+            features["rsi_oversold"] = (processed_indicators["rsi"] < 30).astype(int)
+            features["rsi_slope"] = processed_indicators["rsi"].diff(3)
 
         # MACD features
-        if "macd" in indicators and "macd_signal" in indicators:
-            features["macd"] = indicators["macd"]
-            features["macd_signal"] = indicators["macd_signal"]
-            features["macd_histogram"] = indicators.get("macd_histogram", indicators["macd"] - indicators["macd_signal"])
-            features["macd_above_signal"] = (indicators["macd"] > indicators["macd_signal"]).astype(int)
+        if "macd" in processed_indicators and "macd_signal" in processed_indicators:
+            features["macd"] = processed_indicators["macd"]
+            features["macd_signal"] = processed_indicators["macd_signal"]
+            features["macd_histogram"] = processed_indicators.get("macd_histogram", processed_indicators["macd"] - processed_indicators["macd_signal"])
+            features["macd_above_signal"] = (processed_indicators["macd"] > processed_indicators["macd_signal"]).astype(int)
 
         # ATR features
-        if "atr" in indicators:
-            features["atr"] = indicators["atr"]
-            features["atr_percent"] = indicators["atr"] / df["close"] * 100
+        if "atr" in processed_indicators:
+            features["atr"] = processed_indicators["atr"]
+            features["atr_percent"] = processed_indicators["atr"] / df["close"] * 100
 
         # Bollinger Bands
-        if "bb_upper" in indicators and "bb_lower" in indicators:
-            features["bb_position"] = (df["close"] - indicators["bb_lower"]) / (indicators["bb_upper"] - indicators["bb_lower"])
-            features["bb_squeeze"] = ((indicators["bb_upper"] - indicators["bb_lower"]) / df["close"] < 0.02).astype(int)
+        if "bb_upper" in processed_indicators and "bb_lower" in processed_indicators:
+            bb_width = processed_indicators["bb_upper"] - processed_indicators["bb_lower"]
+            features["bb_position"] = (df["close"] - processed_indicators["bb_lower"]) / bb_width.replace(0, 0.0001)
+            features["bb_squeeze"] = ((processed_indicators["bb_upper"] - processed_indicators["bb_lower"]) / df["close"] < 0.02).astype(int)
 
         # ADX
-        if "adx" in indicators:
-            features["adx"] = indicators["adx"]
-            features["strong_trend"] = (indicators["adx"] > 25).astype(int)
+        if "adx" in processed_indicators:
+            features["adx"] = processed_indicators["adx"]
+            features["strong_trend"] = (processed_indicators["adx"] > 25).astype(int)
 
         # Volume
-        if "relative_volume" in indicators:
-            features["relative_volume"] = indicators["relative_volume"]
+        if "relative_volume" in processed_indicators:
+            features["relative_volume"] = processed_indicators["relative_volume"]
 
         return features
 
@@ -467,7 +477,7 @@ class MLEngine:
         # Record performance
         performance = self._evaluate_model(features, target)
         self.performance_history.append(performance)
-        self.last_training_time = datetime.utcnow()
+        self.last_training_time = datetime.now(timezone.utc)
 
         logger.info(
             f"Training complete. Model: {self.config.model_type.value}, "
@@ -484,8 +494,12 @@ class MLEngine:
         X_scaled = self.scaler.transform(features)
 
         method = self.config.calibration_method
+        # Ensure cv is at least 2 and at most 5, and not more than the number of samples in the smallest class
+        n_samples = len(features)
+        cv_value = min(5, max(2, n_samples // 10))
+        
         self.calibrated_model = CalibratedClassifierCV(
-            self.model, method=method, cv="prefit"
+            self.model, method=method, cv=cv_value
         )
         self.calibrated_model.fit(X_scaled, target)
 
@@ -517,7 +531,7 @@ class MLEngine:
                 model_version=self.model_version,
                 feature_importance={},
                 prediction_explanation="Insufficient data for prediction",
-                prediction_timestamp=datetime.utcnow(),
+                prediction_timestamp=datetime.now(timezone.utc),
                 market_regime="unknown",
             )
 
@@ -552,7 +566,7 @@ class MLEngine:
             model_version=self.model_version,
             feature_importance=feature_importance,
             prediction_explanation=explanation,
-            prediction_timestamp=datetime.utcnow(),
+            prediction_timestamp=datetime.now(timezone.utc),
             market_regime=market_regime,
         )
 
@@ -624,12 +638,12 @@ class MLEngine:
             sortino_ratio=0.0,
             max_drawdown=0.0,
             expectancy=0.0,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
         )
 
     def _save_model(self) -> None:
         """Save model to disk."""
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         model_file = self._model_path / f"model_{self.config.model_type.value}_{timestamp}.pkl"
 
         model_data = {
@@ -639,7 +653,7 @@ class MLEngine:
             "feature_names": self.feature_names,
             "model_version": self.model_version,
             "config": self.config,
-            "timestamp": datetime.utcnow(),
+            "timestamp": datetime.now(timezone.utc),
         }
 
         with open(model_file, "wb") as f:
@@ -692,7 +706,7 @@ class MLEngine:
             return True
 
         # Check time since last training
-        hours_since = (datetime.utcnow() - self.last_training_time).total_seconds() / 3600
+        hours_since = (datetime.now(timezone.utc) - self.last_training_time).total_seconds() / 3600
         if hours_since >= self.config.retrain_interval_hours:
             logger.info(f"Retraining triggered: {hours_since:.1f} hours since last training")
             return True

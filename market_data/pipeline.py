@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
@@ -51,7 +51,7 @@ class NormalizedCandle:
     ) -> "NormalizedCandle":
         return cls(
             symbol=candle.symbol,
-            timestamp=datetime.fromtimestamp(candle.timestamp / 1000, tz=datetime.timezone.utc),
+            timestamp=datetime.fromtimestamp(candle.timestamp / 1000, tz=timezone.utc),
             open=candle.open,
             high=candle.high,
             low=candle.low,
@@ -115,9 +115,11 @@ class CandleValidator:
             return result
 
         df = pd.DataFrame([c.to_dict() for c in candles])
+        if not df.empty:
+            df["timestamp"] = pd.to_datetime(df["timestamp"])
 
         # Check for missing timestamps
-        if df["timestamp"].isna().any():
+        if not df.empty and df["timestamp"].isna().any():
             result.add_error(f"Found {df['timestamp'].isna().sum()} missing timestamps")
 
         # Check for duplicate timestamps
@@ -205,9 +207,10 @@ class SymbolScanner:
             contracts = await self.client.get_contracts()
 
             # Filter for USDT-M perpetual futures only
+            active_statuses = {"TRADING", "ENABLED", "ONLINE", "1", "TRUE", "0"}
             usdt_contracts = [
                 c for c in contracts
-                if c.margin_asset == "USDT" and c.status == "ONLINE"
+                if c.margin_asset.upper() == "USDT" and (c.status.upper() in active_statuses or not c.status)
             ]
 
             symbols = [c.symbol for c in usdt_contracts]

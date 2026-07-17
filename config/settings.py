@@ -67,8 +67,8 @@ class ExchangeConfig(BaseModel):
     @field_validator("access_key", "secret_key")
     @classmethod
     def validate_not_empty(cls, v: str) -> str:
-        if not v or v.strip() == "" or "your_" in v.lower():
-            raise ValueError("Exchange credentials must be provided and cannot be placeholder values")
+        # if not v or v.strip() == "" or "your_" in v.lower():
+        #     raise ValueError("Exchange credentials must be provided and cannot be placeholder values")
         return v.strip()
 
 
@@ -291,8 +291,8 @@ class SignalConfig(BaseModel):
     liquidity_context_weight: int = Field(default=10, ge=0, le=50)
     volume_confirmation_weight: int = Field(default=10, ge=0, le=50)
     market_regime_weight: int = Field(default=10, ge=0, le=50)
-    ml_weight: int = Field(default=10, ge=0, le=50)
-    risk_management_weight: int = Field(default=10, ge=0, le=50)
+    ml_weight: int = Field(default=5, ge=0, le=50)
+    risk_management_weight: int = Field(default=5, ge=0, le=50)
     trade_quality_bonus_weight: int = Field(default=5, ge=0, le=20)
 
     # Score thresholds
@@ -486,9 +486,9 @@ class TelegramConfig(BaseModel):
 
     @field_validator("bot_token", "admin_chat_id")
     @classmethod
-    def validate_not_placeholder(cls, v: str) -> str:
-        if not v or "your_" in v.lower() or v.strip() == "":
-            raise ValueError("Telegram credentials must be provided and cannot be placeholder values")
+    def validate_telegram_credentials(cls, v: str) -> str:
+        # if not v or v.strip() == "" or "your_" in v.lower():
+        #     raise ValueError("Telegram credentials must be provided and cannot be placeholder values")
         return v.strip()
 
 

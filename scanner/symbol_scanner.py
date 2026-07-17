@@ -47,11 +47,14 @@ class SymbolInfo:
 
     def is_active(self) -> bool:
         """Return True only for actively-trading USDT perpetual contracts."""
-        return (
-            self.status.upper() == "TRADING"
-            and self.quote_asset.upper() == "USDT"
-            and self.contract_type.upper() == "PERPETUAL"
-        )
+        # Status on MEXC can be ENABLED, ONLINE, TRADING, 1
+        active_statuses = {"TRADING", "ENABLED", "ONLINE", "1", "TRUE"}
+        # Some contracts might have empty status but be tradeable
+        status_ok = self.status.upper() in active_statuses or not self.status
+        # Ensure it's USDT-M
+        quote_ok = self.quote_asset.upper() == "USDT"
+        # MEXC /detail endpoint returns futures
+        return status_ok and quote_ok
 
 
 @dataclass

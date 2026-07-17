@@ -6,7 +6,7 @@ Institutional-grade market structure analysis based on validated swing structure
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from enum import Enum, auto
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -299,7 +299,7 @@ class SMCEngine:
             displacements=displacements,
             equal_highs=equal_highs,
             equal_lows=equal_lows,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
         )
 
     # =================================================================
@@ -335,7 +335,7 @@ class SMCEngine:
 
                 swing_points.append(SwingPoint(
                     index=i,
-                    timestamp=df.index[i] if hasattr(df.index, "__getitem__") else datetime.utcnow(),
+                    timestamp=df.index[i] if hasattr(df.index, "__getitem__") else datetime.now(timezone.utc),
                     price=highs.iloc[i],
                     swing_type=swing_type,
                     strength=strength,
@@ -354,7 +354,7 @@ class SMCEngine:
 
                 swing_points.append(SwingPoint(
                     index=i,
-                    timestamp=df.index[i] if hasattr(df.index, "__getitem__") else datetime.utcnow(),
+                    timestamp=df.index[i] if hasattr(df.index, "__getitem__") else datetime.now(timezone.utc),
                     price=lows.iloc[i],
                     swing_type=swing_type,
                     strength=strength,
@@ -518,6 +518,12 @@ class SMCEngine:
     def _detect_choch(self, df: pd.DataFrame, swing_points: List[SwingPoint], 
                      current_structure: StructureType, atr: pd.Series) -> List[ChangeOfCharacter]:
         """Detect Change of Character events."""
+        # Handle case where current_structure might be a Series due to vectorized operations
+        if isinstance(current_structure, pd.Series):
+            if current_structure.empty:
+                return []
+            current_structure = current_structure.iloc[-1]
+
         if current_structure == StructureType.UNKNOWN:
             return []
 
@@ -629,7 +635,7 @@ class SMCEngine:
 
                         order_blocks.append(OrderBlock(
                             index=ob_index,
-                            timestamp=df.index[ob_index] if hasattr(df.index, "__getitem__") else datetime.utcnow(),
+                            timestamp=df.index[ob_index] if hasattr(df.index, "__getitem__") else datetime.now(timezone.utc),
                             ob_type=OBType.BULLISH,
                             top=ob_candle["high"],
                             bottom=ob_candle["low"],
@@ -665,7 +671,7 @@ class SMCEngine:
 
                         order_blocks.append(OrderBlock(
                             index=ob_index,
-                            timestamp=df.index[ob_index] if hasattr(df.index, "__getitem__") else datetime.utcnow(),
+                            timestamp=df.index[ob_index] if hasattr(df.index, "__getitem__") else datetime.now(timezone.utc),
                             ob_type=OBType.BEARISH,
                             top=ob_candle["high"],
                             bottom=ob_candle["low"],
@@ -724,14 +730,14 @@ class SMCEngine:
 
                     fvgs.append(FairValueGap(
                         index=i,
-                        timestamp=df.index[i] if hasattr(df.index, "__getitem__") else datetime.utcnow(),
+                        timestamp=df.index[i] if hasattr(df.index, "__getitem__") else datetime.now(timezone.utc),
                         upper_boundary=candle_3["low"],
                         lower_boundary=candle_1["high"],
                         gap_size=gap_size,
                         gap_size_atr=gap_atr,
                         filled_percent=filled_percent,
                         status=status,
-                        creation_timestamp=df.index[i] if hasattr(df.index, "__getitem__") else datetime.utcnow(),
+                        creation_timestamp=df.index[i] if hasattr(df.index, "__getitem__") else datetime.now(timezone.utc),
                         confidence=confidence,
                     ))
 
@@ -763,14 +769,14 @@ class SMCEngine:
 
                     fvgs.append(FairValueGap(
                         index=i,
-                        timestamp=df.index[i] if hasattr(df.index, "__getitem__") else datetime.utcnow(),
+                        timestamp=df.index[i] if hasattr(df.index, "__getitem__") else datetime.now(timezone.utc),
                         upper_boundary=candle_1["low"],
                         lower_boundary=candle_3["high"],
                         gap_size=gap_size,
                         gap_size_atr=gap_atr,
                         filled_percent=filled_percent,
                         status=status,
-                        creation_timestamp=df.index[i] if hasattr(df.index, "__getitem__") else datetime.utcnow(),
+                        creation_timestamp=df.index[i] if hasattr(df.index, "__getitem__") else datetime.now(timezone.utc),
                         confidence=confidence,
                     ))
 
@@ -837,7 +843,7 @@ class SMCEngine:
 
                                 sweeps.append(LiquiditySweep(
                                     index=k,
-                                    timestamp=df.index[k] if hasattr(df.index, "__getitem__") else datetime.utcnow(),
+                                    timestamp=df.index[k] if hasattr(df.index, "__getitem__") else datetime.now(timezone.utc),
                                     sweep_type="buy_side",
                                     liquidity_level=liquidity_level,
                                     sweep_candle=candle.to_dict(),
@@ -888,7 +894,7 @@ class SMCEngine:
 
                                 sweeps.append(LiquiditySweep(
                                     index=k,
-                                    timestamp=df.index[k] if hasattr(df.index, "__getitem__") else datetime.utcnow(),
+                                    timestamp=df.index[k] if hasattr(df.index, "__getitem__") else datetime.now(timezone.utc),
                                     sweep_type="sell_side",
                                     liquidity_level=liquidity_level,
                                     sweep_candle=candle.to_dict(),
@@ -1035,7 +1041,7 @@ class SMCEngine:
             body_percent = body / (candle["high"] - candle["low"]) if (candle["high"] - candle["low"]) > 0 else 0
 
             avg_volume = df["volume"].iloc[max(0, i-20):i].mean()
-            rel_volume = candle["volume"] / avg_volume if avg_vol > 0 else 1.0
+            rel_volume = candle["volume"] / avg_volume if avg_volume > 0 else 1.0
 
             # Check if displacement criteria met
             if body_atr >= self.config.displacement_atr_multiple and                body_percent >= self.config.displacement_body_percent and                rel_volume >= self.config.displacement_relative_volume:
@@ -1045,7 +1051,7 @@ class SMCEngine:
 
                 displacements.append(Displacement(
                     index=i,
-                    timestamp=df.index[i] if hasattr(df.index, "__getitem__") else datetime.utcnow(),
+                    timestamp=df.index[i] if hasattr(df.index, "__getitem__") else datetime.now(timezone.utc),
                     direction=direction,
                     atr_multiple=body_atr,
                     body_percent=body_percent,

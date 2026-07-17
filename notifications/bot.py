@@ -71,7 +71,12 @@ class TelegramBot:
 
     async def initialize(self) -> None:
         """Initialize the Telegram bot."""
-        self.application = Application.builder().token(self.config.bot_token).drop_pending_updates(True).build()
+        try:
+            self.application = Application.builder().token(self.config.bot_token).build()
+        except Exception as e:
+            logger.warning(f"Telegram bot initialization failed: {e}. Using mock mode.")
+            self.application = None
+            return
 
         # Register command handlers
         self.application.add_handler(CommandHandler("start", self._cmd_start))
@@ -101,6 +106,10 @@ class TelegramBot:
         if not self.application:
             await self.initialize()
 
+        if not self.application:
+            logger.warning("Telegram bot not initialized, skipping start")
+            return
+
         self._running = True
 
         # Start message queue processor
@@ -109,7 +118,7 @@ class TelegramBot:
         # Start polling
         await self.application.initialize()
         await self.application.start()
-        await self.application.updater.start_polling()
+        await self.application.updater.start_polling(drop_pending_updates=True)
 
         logger.info("Telegram bot started")
 
@@ -125,7 +134,8 @@ class TelegramBot:
                 pass
 
         if self.application:
-            await self.application.updater.stop()
+            if self.application.updater:
+                await self.application.updater.stop()
             await self.application.stop()
             await self.application.shutdown()
 

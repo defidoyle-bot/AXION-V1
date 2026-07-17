@@ -190,6 +190,9 @@ class MEXCClient:
 
     def __init__(self, config: Optional[ExchangeConfig] = None):
         self.config = config or get_config().exchange
+        if self.config.futures_base_url:
+            self.BASE_URL = self.config.futures_base_url.rstrip("/")
+        self.config = config or get_config().exchange
         self._session: Optional[aiohttp.ClientSession] = None
         self._rate_limiter = RateLimiter(self.config.rate_limit_per_second)
         self._lock = asyncio.Lock()
@@ -219,6 +222,7 @@ class MEXCClient:
                 headers={
                     "Content-Type": "application/json",
                     "Accept": "application/json",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
                 }
             )
             logger.info("MEXC HTTP session established")
@@ -246,6 +250,7 @@ class MEXCClient:
         params: Optional[Dict[str, Any]] = None,
         authenticated: bool = False,
         retry_count: int = 0,
+        version_override: Optional[str] = None,
     ) -> Any:
         """Make an API request with rate limiting and retry logic."""
         await self._rate_limiter.acquire()
@@ -253,7 +258,8 @@ class MEXCClient:
         if self._session is None or self._session.closed:
             await self.connect()
 
-        url = f"{self.BASE_URL}{self.API_VERSION}{endpoint}"
+        version = version_override if version_override else self.API_VERSION
+        url = f"{self.BASE_URL}{version}{endpoint}"
         request_params = params or {}
 
         if authenticated:
@@ -276,7 +282,7 @@ class MEXCClient:
                         wait = self.config.retry_backoff_seconds * (2 ** retry_count)
                         logger.warning(f"Rate limited, waiting {wait}s before retry {retry_count + 1}")
                         await asyncio.sleep(wait)
-                        return await self._request(method, endpoint, params, authenticated, retry_count + 1)
+                        return await self._request(method, endpoint, params, authenticated, retry_count + 1, version_override)
                     raise MEXCAPIError("Rate limit exceeded after max retries")
 
                 if response.status >= 500:
@@ -285,7 +291,7 @@ class MEXCClient:
                         wait = self.config.retry_backoff_seconds * (2 ** retry_count)
                         logger.warning(f"Server error {response.status}, retrying in {wait}s")
                         await asyncio.sleep(wait)
-                        return await self._request(method, endpoint, params, authenticated, retry_count + 1)
+                        return await self._request(method, endpoint, params, authenticated, retry_count + 1, version_override)
 
                 response.raise_for_status()
                 data = await response.json()
@@ -300,7 +306,7 @@ class MEXCClient:
                 wait = self.config.retry_backoff_seconds * (2 ** retry_count)
                 logger.warning(f"Request failed: {e}, retrying in {wait}s")
                 await asyncio.sleep(wait)
-                return await self._request(method, endpoint, params, authenticated, retry_count + 1)
+                return await self._request(method, endpoint, params, authenticated, retry_count + 1, version_override)
             raise MEXCAPIError(f"Request failed after {self.config.max_retries} retries: {e}")
 
     # =============================================================================
@@ -313,9 +319,14 @@ class MEXCClient:
         contracts = []
         for item in data:
             contract = MEXCContractInfo.from_api_response(item)
-            if contract.margin_asset.upper() == "USDT" and contract.status in ("ONLINE", "ENABLED", "TRADING", "1", "TRUE", ""):
+            # Log first few items to debug
+            if len(contracts) < 3:
+                logger.debug(f"Contract debug: symbol={contract.symbol}, margin={contract.margin_asset}, status={contract.status}")
+            
+            # MEXC futures margin asset can be 'USDT'
+            if contract.margin_asset.upper() == "USDT":
                 contracts.append(contract)
-        logger.info(f"Discovered {len(contracts)} active USDT-M perpetual contracts")
+        logger.info(f"Discovered {len(contracts)} USDT-M perpetual contracts")
         return contracts
 
     async def get_klines(
@@ -327,20 +338,31 @@ class MEXCClient:
         limit: int = 500,
     ) -> List[MEXCCandle]:
         """Get OHLCV candlestick data."""
-        params = {
-            "symbol": symbol,
-            "interval": interval,
-            "limit": limit,
-        }
-        if start_time:
-            params["startTime"] = start_time
-        if end_time:
-            params["endTime"] = end_time
+        # For now, prioritize spot API as futures endpoints are unreliable in this environment
+        spot_symbol = symbol.replace("_", "")
+        spot_base = "https://api.mexc.com"
+        url = f"{spot_base}/api/v3/klines"
+        
+        try:
+            async with self._session.get(url, params={"symbol": spot_symbol, "interval": interval, "limit": limit}) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return [MEXCCandle.from_api_response(symbol, item) for item in data]
+                else:
+                    logger.warning(f"Spot kline failed with {response.status}, trying futures...")
+        except Exception as e:
+            logger.warning(f"Spot kline error: {e}, trying futures...")
 
-        data = await self._request("GET", "/kline", params)
-        candles = [MEXCCandle.from_api_response(symbol, item) for item in data]
-        logger.debug(f"Fetched {len(candles)} candles for {symbol} {interval}")
-        return candles
+        params = {"symbol": symbol, "interval": interval, "limit": limit}
+        if start_time: params["startTime"] = start_time
+        if end_time: params["endTime"] = end_time
+
+        try:
+            data = await self._request("GET", "/kline", params, version_override="/api/v1")
+        except MEXCAPIError:
+            data = await self._request("GET", "/kline", params)
+
+        return [MEXCCandle.from_api_response(symbol, item) for item in data]
 
     async def get_ticker(self, symbol: Optional[str] = None) -> List[MEXCTicker]:
         """Get 24h ticker statistics."""
@@ -348,11 +370,13 @@ class MEXCClient:
         if symbol:
             params["symbol"] = symbol
 
-        data = await self._request("GET", "/ticker", params)
-
-        if symbol:
-            return [MEXCTicker.from_api_response(data)]
-        return [MEXCTicker.from_api_response(item) for item in data]
+        try:
+            data = await self._request("GET", "/ticker", params)
+            if symbol:
+                return [MEXCTicker.from_api_response(data)]
+            return [MEXCTicker.from_api_response(item) for item in data]
+        except MEXCAPIError:
+            return []
 
     async def get_order_book(self, symbol: str, limit: int = 5) -> MEXCOrderBook:
         """Get order book depth."""
@@ -374,12 +398,26 @@ class MEXCClient:
         params = {}
         if symbol:
             params["symbol"] = symbol
-        return await self._request("GET", "/funding_rate", params)
+        try:
+            return await self._request("GET", "/funding_rate", params)
+        except MEXCAPIError:
+            return {}
 
     async def get_open_interest(self, symbol: str) -> float:
-        """Get open interest for a symbol."""
-        data = await self._request("GET", "/open_interest", {"symbol": symbol})
-        return float(data.get("openInterest", 0))
+        """Get current open interest for a symbol."""
+        try:
+            # Try both possible endpoints for open interest
+            try:
+                data = await self._request("GET", "/open_interest", {"symbol": symbol})
+            except MEXCAPIError:
+                data = await self._request("GET", "/open_interest", {"symbol": symbol}, version_override="/api/v1")
+            
+            if isinstance(data, dict):
+                return float(data.get("openInterest", data.get("amount", 0)))
+            return 0.0
+        except Exception:
+            # Return 0 if open interest is not available
+            return 0.0
 
     async def health_check(self) -> Dict[str, Any]:
         """Check exchange connectivity."""

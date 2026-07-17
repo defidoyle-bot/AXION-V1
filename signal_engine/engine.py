@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
 from typing import Any, Dict, List, Optional, Tuple
+import numpy as np
 
 from config.settings import (
     SignalConfig, StrategyProfile, Timeframe, get_config,
