@@ -284,10 +284,10 @@ class SignalConfig(BaseModel):
     """Signal scoring and decision engine configuration."""
 
     # Weights (must sum to 100)
-    higher_tf_trend_weight: int = Field(default=15, ge=0, le=50)
+    higher_tf_trend_weight: int = Field(default=10, ge=0, le=50)
     lower_tf_trend_weight: int = Field(default=10, ge=0, le=50)
     technical_indicators_weight: int = Field(default=10, ge=0, le=50)
-    smc_weight: int = Field(default=20, ge=0, le=50)
+    smc_weight: int = Field(default=15, ge=0, le=50)
     liquidity_context_weight: int = Field(default=10, ge=0, le=50)
     volume_confirmation_weight: int = Field(default=10, ge=0, le=50)
     market_regime_weight: int = Field(default=10, ge=0, le=50)
