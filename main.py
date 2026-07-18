@@ -421,6 +421,12 @@ class RiskHandler(EventHandler):
                 direction="LONG",
                 risk_assessment=risk_assessment.to_dict(),
                 approved=True,
+                ml_prediction={
+                    "probability_of_success": payload.probability,
+                    "confidence": payload.confidence,
+                },
+                smc_data=payload.smc_data,
+                indicators=payload.indicators,
             ),
             metadata=EventMetadata(source="risk_handler", priority=EventPriority.HIGH),
         )
@@ -472,6 +478,9 @@ class SignalHandler(EventHandler):
                 classification=score.classification,
                 score_breakdown=score.to_dict(),
                 timestamp=datetime.now(timezone.utc),
+                risk_assessment=payload.risk_assessment,
+                ml_prediction=payload.ml_prediction,
+                smc_data=payload.smc_data,
             ),
             metadata=EventMetadata(source="signal_handler", priority=EventPriority.HIGH),
         )
@@ -497,21 +506,30 @@ class ApprovalHandler(EventHandler):
             return None
 
         signal_id = str(uuid.uuid4())[:8]
+        risk = payload.risk_assessment
+        ml = payload.ml_prediction or {}
+        smc = payload.smc_data
+
         return Event(
             event_type="SignalApproved",
             payload=SignalApproved(
                 signal_id=signal_id,
                 symbol=payload.symbol,
                 direction=payload.direction,
-                entry_price=0.0,
-                stop_loss=0.0,
-                take_profit=[0.0],
-                position_size=0.0,
-                leverage=5,
+                entry_price=risk.get("position_size", {}).get("entry_price", risk.get("stop_loss", 0) + (risk.get("stop_loss", 0) * 0.01)),
+                stop_loss=risk.get("stop_loss", 0.0),
+                take_profit=risk.get("take_profit", [0.0]),
+                position_size=risk.get("position_size", {}).get("size", 0.0),
+                leverage=risk.get("leverage", 5),
                 score=payload.score,
                 classification=payload.classification,
-                risk_reward=2.0,
+                risk_reward=risk.get("risk_reward", 2.0),
                 timestamp=datetime.now(timezone.utc),
+                ml_probability=ml.get("probability_of_success", 0.0),
+                ml_confidence=ml.get("confidence", 0.0),
+                market_regime=smc.get("current_structure", "unknown"),
+                smc_summary=f"{len(smc.get('order_blocks', []))} OBs, {len(smc.get('fvgs', []))} FVGs",
+                risk_status="Approved" if risk.get("approved") else "Rejected",
             ),
             metadata=EventMetadata(source="approval_handler", priority=EventPriority.HIGH),
         )
@@ -541,6 +559,11 @@ class TelegramHandler(EventHandler):
             "classification": payload.classification,
             "risk_reward": payload.risk_reward,
             "leverage": payload.leverage,
+            "ml_probability": payload.ml_probability,
+            "ml_confidence": payload.ml_confidence,
+            "market_regime": payload.market_regime,
+            "smc_summary": payload.smc_summary,
+            "risk_status": payload.risk_status,
         }
 
         await self.bot.send_signal(signal_dict)

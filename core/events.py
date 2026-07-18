@@ -130,6 +130,9 @@ class MLPredictionCompleted:
     model_version: str
     feature_importance: Dict[str, float]
     prediction_explanation: str
+    candles: List[Dict[str, Any]] = field(default_factory=list)
+    indicators: Dict[str, Any] = field(default_factory=dict)
+    smc_data: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass(frozen=True, slots=True)
 class RiskValidationCompleted:
@@ -139,6 +142,9 @@ class RiskValidationCompleted:
     risk_assessment: Dict[str, Any]
     approved: bool
     rejection_reason: Optional[str] = None
+    ml_prediction: Optional[Dict[str, Any]] = None
+    smc_data: Dict[str, Any] = field(default_factory=dict)
+    indicators: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass(frozen=True, slots=True)
 class SignalScored:
@@ -149,6 +155,9 @@ class SignalScored:
     classification: str
     score_breakdown: Dict[str, float]
     timestamp: datetime
+    risk_assessment: Dict[str, Any] = field(default_factory=dict)
+    ml_prediction: Optional[Dict[str, Any]] = None
+    smc_data: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass(frozen=True, slots=True)
 class SignalApproved:
@@ -165,6 +174,11 @@ class SignalApproved:
     classification: str
     risk_reward: float
     timestamp: datetime
+    ml_probability: float = 0.0
+    ml_confidence: float = 0.0
+    market_regime: str = "unknown"
+    smc_summary: str = ""
+    risk_status: str = ""
 
 @dataclass(frozen=True, slots=True)
 class TelegramNotificationSent:
