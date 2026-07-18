@@ -296,11 +296,11 @@ class SignalConfig(BaseModel):
     trade_quality_bonus_weight: int = Field(default=5, ge=0, le=20)
 
     # Score thresholds
-    institutional_grade_threshold: int = Field(default=85, ge=50, le=100)
-    premium_threshold: int = Field(default=72, ge=50, le=95)
-    strong_threshold: int = Field(default=62, ge=50, le=90)
-    standard_threshold: int = Field(default=55, ge=50, le=80)
-    watchlist_threshold: int = Field(default=50, ge=50, le=70)
+    institutional_grade_threshold: int = Field(default=80, ge=20, le=100)
+    premium_threshold: int = Field(default=65, ge=20, le=95)
+    strong_threshold: int = Field(default=50, ge=20, le=90)
+    standard_threshold: int = Field(default=35, ge=20, le=80)
+    watchlist_threshold: int = Field(default=25, ge=20, le=70)
 
     # Adaptive thresholds
     adaptive_scoring_enabled: bool = Field(default=True)
