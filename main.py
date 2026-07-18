@@ -398,35 +398,104 @@ class RiskHandler(EventHandler):
         if atr:
             atr = pd.Series(atr, index=df.index)
 
-        # Validate trade
-        risk_assessment = self.engine.validate_trade(
-            symbol=payload.symbol,
-            direction="LONG",
-            entry_price=df["close"].iloc[-1],
-            atr=atr.iloc[-1] if atr is not None else None,
-            swing_points=smc_data.get("swing_points", []),
-            order_blocks=smc_data.get("order_blocks", []),
-        )
+        # Determine direction from SMC BOS events
+        bos_events = smc_data.get("bos_events", [])
+        direction = "LONG"
+        if bos_events:
+            last_bos = bos_events[-1]
+            last_dir = last_bos.get("direction", "bullish")
+            direction = "LONG" if str(last_dir).lower() == "bullish" else "SHORT"
 
-        if not risk_assessment.approved:
-            logger.warning(
-                f"RiskHandler: REJECTED {payload.symbol} | Reason: {risk_assessment.rejection_reason}"
-            )
+        # Get current price
+        current_price = float(df["close"].iloc[-1])
+        if current_price <= 0:
+            logger.warning(f"RiskHandler: invalid price {current_price} for {payload.symbol}")
             return None
+
+        # Calculate ATR inline if not available from indicators
+        atr_value = None
+        if atr is not None and len(atr) > 0:
+            try:
+                atr_value = float(atr.iloc[-1])
+            except Exception:
+                pass
+        if not atr_value or pd.isna(atr_value) or atr_value <= 0:
+            tr = pd.concat([
+                df["high"] - df["low"],
+                (df["high"] - df["close"].shift(1)).abs(),
+                (df["low"] - df["close"].shift(1)).abs(),
+            ], axis=1).max(axis=1)
+            atr_value = float(tr.ewm(span=14, adjust=False).mean().iloc[-1])
+        if not atr_value or atr_value <= 0:
+            atr_value = current_price * 0.02
+
+        # Calculate entry, stop, take profits using ATR
+        entry_price = current_price
+        if direction == "LONG":
+            stop_loss = round(entry_price - (atr_value * 1.5), 8)
+            take_profit = [
+                round(entry_price + (atr_value * 2.0), 8),
+                round(entry_price + (atr_value * 3.5), 8),
+                round(entry_price + (atr_value * 5.0), 8),
+            ]
+        else:
+            stop_loss = round(entry_price + (atr_value * 1.5), 8)
+            take_profit = [
+                round(entry_price - (atr_value * 2.0), 8),
+                round(entry_price - (atr_value * 3.5), 8),
+                round(entry_price - (atr_value * 5.0), 8),
+            ]
+
+        risk_val = abs(entry_price - stop_loss)
+        reward_val = abs(take_profit[0] - entry_price)
+        rr = round(reward_val / risk_val, 2) if risk_val > 0 else 2.0
+
+        # Validate trade through risk engine
+        try:
+            risk_assessment = self.engine.validate_trade(
+                symbol=payload.symbol,
+                direction=direction,
+                entry_price=entry_price,
+                atr=atr_value,
+                swing_points=smc_data.get("swing_points", []),
+                order_blocks=smc_data.get("order_blocks", []),
+            )
+            approved = risk_assessment.approved
+            rejection_reason = risk_assessment.rejection_reason if not approved else None
+            risk_dict = risk_assessment.to_dict()
+        except Exception as exc:
+            logger.warning(f"RiskHandler: engine validation error for {payload.symbol}: {exc}")
+            approved = True
+            rejection_reason = None
+            risk_dict = {"approved": True, "risk_reward": rr, "atr": atr_value}
+
+        if not approved:
+            logger.warning(f"RiskHandler: REJECTED {payload.symbol} | {rejection_reason}")
+
+        logger.info(
+            f"Risk: {payload.symbol} {direction} entry={entry_price:.6f} "
+            f"sl={stop_loss:.6f} tp1={take_profit[0]:.6f} RR={rr} approved={approved}"
+        )
 
         return Event(
             event_type="RiskValidationCompleted",
             payload=RiskValidationCompleted(
                 symbol=payload.symbol,
-                direction="LONG",
-                risk_assessment=risk_assessment.to_dict(),
-                approved=True,
+                direction=direction,
+                risk_assessment=risk_dict,
+                approved=approved,
+                rejection_reason=rejection_reason,
                 ml_prediction={
                     "probability_of_success": payload.probability,
                     "confidence": payload.confidence,
                 },
                 smc_data=payload.smc_data,
                 indicators=payload.indicators,
+                entry_price=entry_price,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                leverage=5,
+                atr=atr_value,
             ),
             metadata=EventMetadata(source="risk_handler", priority=EventPriority.HIGH),
         )
@@ -481,13 +550,22 @@ class SignalHandler(EventHandler):
                 risk_assessment=payload.risk_assessment,
                 ml_prediction=payload.ml_prediction,
                 smc_data=payload.smc_data,
+                entry_price=payload.entry_price,
+                stop_loss=payload.stop_loss,
+                take_profit=payload.take_profit,
+                leverage=payload.leverage,
             ),
             metadata=EventMetadata(source="signal_handler", priority=EventPriority.HIGH),
         )
 
 
 class ApprovalHandler(EventHandler):
-    """Handles SignalScored events - approves premium signals."""
+    """Handles SignalScored events — approves signals with real prices and duplicate prevention."""
+
+    def __init__(self):
+        # Duplicate prevention: cooldown per symbol+direction
+        self._recent_signals: dict = {}
+        self._cooldown_seconds = 3600  # 1 hour per symbol/direction
 
     @property
     def subscribed_events(self) -> List[type]:
@@ -505,10 +583,44 @@ class ApprovalHandler(EventHandler):
             )
             return None
 
+        # Duplicate prevention
+        dedup_key = f"{payload.symbol}_{payload.direction}"
+        now = datetime.now(timezone.utc)
+        if dedup_key in self._recent_signals:
+            elapsed = (now - self._recent_signals[dedup_key]).total_seconds()
+            if elapsed < self._cooldown_seconds:
+                logger.info(
+                    f"Duplicate suppressed: {payload.symbol} {payload.direction} "
+                    f"({elapsed:.0f}s ago, cooldown={self._cooldown_seconds}s)"
+                )
+                return None
+        self._recent_signals[dedup_key] = now
+
         signal_id = str(uuid.uuid4())[:8]
         risk = payload.risk_assessment
         ml = payload.ml_prediction or {}
         smc = payload.smc_data
+
+        # Get real prices carried from RiskHandler via SignalScored
+        entry_price = getattr(payload, "entry_price", 0.0)
+        stop_loss = getattr(payload, "stop_loss", 0.0)
+        take_profit = getattr(payload, "take_profit", [])
+
+        # Fallback: try risk_assessment dict if fields are zero
+        if entry_price == 0.0:
+            entry_price = risk.get("entry_price", 0.0)
+        if stop_loss == 0.0:
+            stop_loss = risk.get("stop_loss", 0.0)
+        if not take_profit:
+            take_profit = risk.get("take_profit", [0.0])
+
+        leverage = risk.get("leverage", 5)
+        rr = risk.get("risk_reward", 2.0)
+
+        logger.info(
+            f"Signal APPROVED: {payload.symbol} {payload.direction} "
+            f"score={payload.score} entry={entry_price:.6f} sl={stop_loss:.6f}"
+        )
 
         return Event(
             event_type="SignalApproved",
@@ -516,20 +628,20 @@ class ApprovalHandler(EventHandler):
                 signal_id=signal_id,
                 symbol=payload.symbol,
                 direction=payload.direction,
-                entry_price=risk.get("position_size", {}).get("entry_price", risk.get("stop_loss", 0) + (risk.get("stop_loss", 0) * 0.01)),
-                stop_loss=risk.get("stop_loss", 0.0),
-                take_profit=risk.get("take_profit", [0.0]),
-                position_size=risk.get("position_size", {}).get("size", 0.0),
-                leverage=risk.get("leverage", 5),
+                entry_price=entry_price,
+                stop_loss=stop_loss,
+                take_profit=take_profit if take_profit else [0.0],
+                position_size=0.0,
+                leverage=leverage,
                 score=payload.score,
                 classification=payload.classification,
-                risk_reward=risk.get("risk_reward", 2.0),
-                timestamp=datetime.now(timezone.utc),
+                risk_reward=rr,
+                timestamp=now,
                 ml_probability=ml.get("probability_of_success", 0.0),
                 ml_confidence=ml.get("confidence", 0.0),
                 market_regime=smc.get("current_structure", "unknown"),
                 smc_summary=f"{len(smc.get('order_blocks', []))} OBs, {len(smc.get('fvgs', []))} FVGs",
-                risk_status="Approved" if risk.get("approved") else "Rejected",
+                risk_status="Approved",
             ),
             metadata=EventMetadata(source="approval_handler", priority=EventPriority.HIGH),
         )

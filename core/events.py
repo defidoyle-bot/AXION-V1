@@ -145,6 +145,11 @@ class RiskValidationCompleted:
     ml_prediction: Optional[Dict[str, Any]] = None
     smc_data: Dict[str, Any] = field(default_factory=dict)
     indicators: Dict[str, Any] = field(default_factory=dict)
+    entry_price: float = 0.0
+    stop_loss: float = 0.0
+    take_profit: List[float] = field(default_factory=list)
+    leverage: int = 5
+    atr: float = 0.0
 
 @dataclass(frozen=True, slots=True)
 class SignalScored:
@@ -158,6 +163,10 @@ class SignalScored:
     risk_assessment: Dict[str, Any] = field(default_factory=dict)
     ml_prediction: Optional[Dict[str, Any]] = None
     smc_data: Dict[str, Any] = field(default_factory=dict)
+    entry_price: float = 0.0
+    stop_loss: float = 0.0
+    take_profit: List[float] = field(default_factory=list)
+    leverage: int = 5
 
 @dataclass(frozen=True, slots=True)
 class SignalApproved:
