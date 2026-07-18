@@ -26,9 +26,11 @@ from config.settings import get_config, LogLevel, Environment
 
 SENSITIVE_PATTERNS = [
     re.compile(r'(api[_-]?key|access[_-]?key|secret[_-]?key|api[_-]?secret|token|password|auth)[:\s=]+([^\s&]+)', re.IGNORECASE),
-    re.compile(r'(mx0[a-zA-Z0-9]+)', re.IGNORECASE),  # MEXC keys
-    re.compile(r'(CG-[a-zA-Z0-9]+)', re.IGNORECASE),  # CoinGecko keys
-    re.compile(r'([0-9]+:[A-Za-z0-9_-]{35})', re.IGNORECASE),  # Telegram bot tokens
+    re.compile(r'(mx[0-9a-zA-Z]{10,})', re.IGNORECASE),  # MEXC keys
+    re.compile(r'(CG-[a-zA-Z0-9-]+)', re.IGNORECASE),  # CoinGecko keys
+    re.compile(r'([0-9]+:[A-Za-z0-9_-]{35,})', re.IGNORECASE),  # Telegram bot tokens
+    re.compile(r'(10e[0-9a-zA-Z]{10,})', re.IGNORECASE),  # MEXC secret keys
+    re.compile(r'(100[0-9a-zA-Z]{10,})', re.IGNORECASE),  # CoinMarketCap keys
 ]
 
 class SecretMaskingFilter(logging.Filter):

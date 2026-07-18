@@ -400,32 +400,25 @@ class MarketDataPipeline:
             # Fetch
             candles = await self.fetch_candles(symbol, timeframe)
 
-            # Validate
-            valid_candles, validation = await self.validate_and_normalize(symbol, timeframe, candles)
-
-            if not valid_candles:
+            if not candles:
+                logger.error(f"No candles fetched for {symbol} {timeframe.value}")
                 return None
 
-            # Create validated event
-            event = Event(
-                event_type="DataValidated",
-                payload=DataValidated(
+            # Emit MarketDataReceived (let MarketDataHandler validate)
+            market_data_event = Event(
+                event_type="MarketDataReceived",
+                payload=MarketDataReceived(
                     symbol=symbol,
                     timeframe=timeframe.value,
-                    candles=[c.to_dict() for c in valid_candles],
-                    validation_result={
-                        "valid": validation.valid,
-                        "errors": validation.errors,
-                        "warnings": validation.warnings,
-                    },
+                    candles=[c.to_dict() for c in candles],
+                    timestamp=datetime.utcnow(),
                 ),
                 metadata=EventMetadata(
                     source="market_data_pipeline",
                     priority=EventPriority.HIGH,
                 ),
             )
-
-            return event
+            return market_data_event
 
         except Exception as e:
             logger.error(f"Pipeline failed for {symbol} {timeframe.value}: {e}", exc_info=True)

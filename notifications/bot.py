@@ -148,19 +148,6 @@ class TelegramBot:
     async def send_signal(self, signal: Dict[str, Any]) -> None:
         """Send a trading signal notification."""
         classification = signal.get("classification", "")
-
-        # Filter by classification
-        if classification == "Institutional Grade" and not self.config.send_institutional_signals:
-            return
-        if classification == "Premium Signal" and not self.config.send_premium_signals:
-            return
-        if classification == "Strong Signal" and not self.config.send_strong_signals:
-            return
-        if classification == "Standard Signal" and not self.config.send_standard_signals:
-            return
-        if classification == "Watchlist" and not self.config.send_watchlist_signals:
-            return
-
         message = self._format_signal_message(signal)
 
         # Send to channel if configured

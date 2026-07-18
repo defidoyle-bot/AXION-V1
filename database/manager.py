@@ -351,7 +351,7 @@ class DatabaseManager:
                 score=signal["score"],
                 classification=signal["classification"],
                 risk_reward=signal["risk_reward"],
-                score_breakdown=signal.get("score_breakdown", {}),
+                score_breakdown=signal.get("score_breakdown", {}),  # Added
                 market_regime=signal.get("market_regime", "unknown"),
                 ml_probability=signal.get("ml_probability", 0.5),
                 ml_confidence=signal.get("ml_confidence", 0.0),

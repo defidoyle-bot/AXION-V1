@@ -67,8 +67,8 @@ class ExchangeConfig(BaseModel):
     @field_validator("access_key", "secret_key")
     @classmethod
     def validate_not_empty(cls, v: str) -> str:
-        # if not v or v.strip() == "" or "your_" in v.lower():
-        #     raise ValueError("Exchange credentials must be provided and cannot be placeholder values")
+        if not v or v.strip() == "" or "your_" in v.lower() or "test" in v.lower():
+            raise ValueError("Exchange credentials must be provided and cannot be placeholder values")
         return v.strip()
 
 
@@ -409,7 +409,7 @@ class RiskConfig(BaseModel):
 
     # Take Profit
     take_profit_method: TakeProfitMethod = Field(default=TakeProfitMethod.FIXED_RR)
-    min_risk_reward: float = Field(default=1.5, ge=1.0, le=10.0)
+    min_risk_reward: float = Field(default=1.2, ge=1.0, le=10.0)
     target_risk_reward: float = Field(default=2.0, ge=1.0, le=10.0)
     atr_tp_multiplier: float = Field(default=3.0, ge=0.5, le=10.0)
 
@@ -487,8 +487,8 @@ class TelegramConfig(BaseModel):
     @field_validator("bot_token", "admin_chat_id")
     @classmethod
     def validate_telegram_credentials(cls, v: str) -> str:
-        # if not v or v.strip() == "" or "your_" in v.lower():
-        #     raise ValueError("Telegram credentials must be provided and cannot be placeholder values")
+        if not v or v.strip() == "" or "your_" in v.lower():
+            raise ValueError("Telegram credentials must be provided and cannot be placeholder values")
         return v.strip()
 
 

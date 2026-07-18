@@ -337,32 +337,17 @@ class MEXCClient:
         end_time: Optional[int] = None,
         limit: int = 500,
     ) -> List[MEXCCandle]:
-        """Get OHLCV candlestick data."""
-        # For now, prioritize spot API as futures endpoints are unreliable in this environment
-        spot_symbol = symbol.replace("_", "")
-        spot_base = "https://api.mexc.com"
-        url = f"{spot_base}/api/v3/klines"
-        
-        try:
-            async with self._session.get(url, params={"symbol": spot_symbol, "interval": interval, "limit": limit}) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return [MEXCCandle.from_api_response(symbol, item) for item in data]
-                else:
-                    logger.warning(f"Spot kline failed with {response.status}, trying futures...")
-        except Exception as e:
-            logger.warning(f"Spot kline error: {e}, trying futures...")
-
+        """Get OHLCV candlestick data from MEXC Futures API."""
         params = {"symbol": symbol, "interval": interval, "limit": limit}
         if start_time: params["startTime"] = start_time
         if end_time: params["endTime"] = end_time
 
         try:
             data = await self._request("GET", "/kline", params, version_override="/api/v1")
-        except MEXCAPIError:
-            data = await self._request("GET", "/kline", params)
-
-        return [MEXCCandle.from_api_response(symbol, item) for item in data]
+            return [MEXCCandle.from_api_response(symbol, item) for item in data]
+        except MEXCAPIError as e:
+            logger.error(f"Failed to fetch klines for {symbol}: {e}")
+            return []
 
     async def get_ticker(self, symbol: Optional[str] = None) -> List[MEXCTicker]:
         """Get 24h ticker statistics."""

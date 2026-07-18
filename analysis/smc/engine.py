@@ -307,59 +307,55 @@ class SMCEngine:
     # =================================================================
 
     def _detect_swings(self, df: pd.DataFrame, atr: pd.Series) -> List[SwingPoint]:
-        """Detect swing highs and lows using pivot logic."""
         pivot = self.config.pivot_length
         highs = df["high"]
         lows = df["low"]
         closes = df["close"]
-
         swing_points = []
 
         for i in range(pivot, len(df) - pivot):
             current_atr = atr.iloc[i] if not pd.isna(atr.iloc[i]) else 0.0001
 
             # Swing High: current high is highest in pivot window
-            is_swing_high = all(highs.iloc[i] >= highs.iloc[i-j] for j in range(1, pivot+1)) and                            all(highs.iloc[i] >= highs.iloc[i+j] for j in range(1, pivot+1))
+            is_swing_high = True
+            for j in range(1, pivot + 1):
+                if highs.iloc[i] < highs.iloc[i - j] or highs.iloc[i] < highs.iloc[i + j]:
+                    is_swing_high = False
+                    break
 
             # Swing Low: current low is lowest in pivot window
-            is_swing_low = all(lows.iloc[i] <= lows.iloc[i-j] for j in range(1, pivot+1)) and                           all(lows.iloc[i] <= lows.iloc[i+j] for j in range(1, pivot+1))
+            is_swing_low = True
+            for j in range(1, pivot + 1):
+                if lows.iloc[i] > lows.iloc[i - j] or lows.iloc[i] > lows.iloc[i + j]:
+                    is_swing_low = False
+                    break
 
             if is_swing_high:
                 price_range = highs.iloc[i-pivot:i+pivot+1].max() - lows.iloc[i-pivot:i+pivot+1].min()
                 strength = price_range / current_atr if current_atr > 0 else 0
-
                 swing_type = self._classify_swing_strength(strength, "high")
-
-                # Confirmation: price must close below swing high
                 confirmed = closes.iloc[i] < highs.iloc[i]
-
                 swing_points.append(SwingPoint(
                     index=i,
-                    timestamp=df.index[i] if hasattr(df.index, "__getitem__") else datetime.now(timezone.utc),
+                    timestamp=df.index[i],
                     price=highs.iloc[i],
                     swing_type=swing_type,
                     strength=strength,
                     confirmed=confirmed,
-                    confirmation_timestamp=df.index[i] if confirmed and hasattr(df.index, "__getitem__") else None,
                 ))
 
             elif is_swing_low:
                 price_range = highs.iloc[i-pivot:i+pivot+1].max() - lows.iloc[i-pivot:i+pivot+1].min()
                 strength = price_range / current_atr if current_atr > 0 else 0
-
                 swing_type = self._classify_swing_strength(strength, "low")
-
-                # Confirmation: price must close above swing low
                 confirmed = closes.iloc[i] > lows.iloc[i]
-
                 swing_points.append(SwingPoint(
                     index=i,
-                    timestamp=df.index[i] if hasattr(df.index, "__getitem__") else datetime.now(timezone.utc),
+                    timestamp=df.index[i],
                     price=lows.iloc[i],
                     swing_type=swing_type,
                     strength=strength,
                     confirmed=confirmed,
-                    confirmation_timestamp=df.index[i] if confirmed and hasattr(df.index, "__getitem__") else None,
                 ))
 
         return swing_points

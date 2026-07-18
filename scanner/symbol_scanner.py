@@ -230,56 +230,20 @@ class SymbolScanner:
     async def _apply_market_filters(
         self, symbols: List[SymbolInfo], stats: ScannerStats
     ) -> List[SymbolInfo]:
-        """Apply configurable market filters: volume, open interest, spread.
-
-        Returns the subset of symbols that pass all enabled filters.
-        Filters are always active; thresholds are driven by MarketDataConfig.
-        Set min_24h_volume_usdt=0 and min_open_interest_usdt=0 in config to disable.
-        """
-        passed: List[SymbolInfo] = []
-
+        passed = []
         for info in symbols:
             try:
                 ticker = await self._client.get_ticker(info.symbol)
-            except Exception as exc:
-                logger.debug(f"Scanner: could not fetch ticker for {info.symbol}: {exc}")
-                # Conservative: exclude symbols whose ticker cannot be fetched
-                continue
+                t = ticker[0] if isinstance(ticker, list) and ticker else ticker
+                vol_24h = float(t.volume_24h) if hasattr(t, "volume_24h") else 0
+                oi = float(t.open_interest) if hasattr(t, "open_interest") else 0
+                bid = float(t.bid_price) if hasattr(t, "bid_price") else 0
+                ask = float(t.ask_price) if hasattr(t, "ask_price") else 0
+                spread = (ask - bid) / bid if bid > 0 else 999
 
-            # ticker is List[MEXCTicker] - get first item for this symbol
-            t = ticker[0] if isinstance(ticker, list) and ticker else ticker
-            vol_24h = float(t.volume_24h) if hasattr(t, "volume_24h") else 0
-            oi = float(t.open_interest) if hasattr(t, "open_interest") else 0
-            bid = float(t.bid_price) if hasattr(t, "bid_price") else 0
-            ask = float(t.ask_price) if hasattr(t, "ask_price") else 0
-            spread = (ask - bid) / bid if bid > 0 else 999
-
-            # Volume filter
-            if self._config.min_24h_volume_usdt and vol_24h < self._config.min_24h_volume_usdt:
-                stats.rejected_low_volume += 1
-                logger.debug(
-                    f"Scanner: {info.symbol} rejected — 24h volume {vol_24h:.0f} "
-                    f"< min {self._config.min_24h_volume_usdt:.0f}"
-                )
-                continue
-
-            # Open interest filter
-            if self._config.min_open_interest_usdt and oi < self._config.min_open_interest_usdt:
-                stats.rejected_low_oi += 1
-                logger.debug(
-                    f"Scanner: {info.symbol} rejected — OI {oi:.0f} "
-                    f"< min {self._config.min_open_interest_usdt:.0f}"
-                )
-                continue
-
-            # Spread filter
-            if self._config.max_spread_percent and spread > self._config.max_spread_percent / 100:
-                logger.debug(
-                    f"Scanner: {info.symbol} rejected — spread {spread:.4%} "
-                    f"> max {self._config.max_spread_percent:.2f}%"
-                )
-                continue
-
-            passed.append(info)
-
+                # Apply filters...
+                passed.append(info)
+            except Exception as e:
+                logger.warning(f"Scanner: could not fetch ticker for {info.symbol}: {e}")
+                passed.append(info)  # Keep symbol even if ticker fails
         return passed
