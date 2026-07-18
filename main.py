@@ -301,53 +301,50 @@ class MLHandler(EventHandler):
             logger.warning(f"MLHandler: insufficient candles ({len(df)}) for {payload.symbol}, skipping")
             return None
 
-        if not self._model_ready:
-            logger.warning(f"MLHandler: model not trained for {payload.symbol}, skipping")
-            return None
+        # Train or retrain if needed (runs in the thread pool to avoid blocking the event loop)
+        if not self._model_ready or self.engine.should_retrain():
+            try:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None,
+                    lambda: self.engine.train(df, payload.indicators, payload.smc_data),
+                )
+                self._model_ready = True
+                logger.info(f"MLHandler: model training complete for {payload.symbol}")
+            except Exception as exc:
+                logger.error(f"MLHandler: training failed: {exc}", exc_info=True)
+                return None  # Skip instead of returning neutral
 
-        # Rest of the logic remains the same...
-        # Note: The fix document ends with "Rest of the logic remains the same..."
-        # but in the actual main.py it was quite long. I should check if I should keep the rest.
-        # Looking at the fix document, it seems to imply replacing the whole handle method.
-        # Wait, the fix document says "Replace the handle method with:" and then gives the code.
-        # But it ends with "# Rest of the logic remains the same...". 
-        # This is a bit ambiguous. Usually it means "insert this at the start and keep the rest".
-        # Let's re-read the fix document for MLHandler.
-        # It says:
-        # async def handle(self, event: Event[Any]) -> Optional[Event]:
-        #     payload = event.payload
-        #     ...
-        #     if not self._model_ready:
-        #         logger.warning(f"MLHandler: model not trained for {payload.symbol}, skipping")
-        #         return None
-        #     # Rest of the logic remains the same...
-        
-        # This suggests I should only replace the start.
-        # However, the previous version had self._neutral_prediction(payload) instead of return None.
-        # The fix seems to prefer skipping (return None) over neutral prediction.
-        
-        # Let's check the original code again.
-        # The original code had a lot of training logic.
-        
-        # I will apply the changes as requested.
-        
-        # Actually, looking at the fix document again, it seems to want to simplify MLHandler to just return None if not ready.
-        
-        # I'll use the provided code and then append the rest of the original logic if it makes sense.
-        # But wait, the original logic had training! If I remove training, it will never be ready unless loaded from disk.
-        
-        # Let's stick to what the user provided.
-        
+        # Run prediction
+        try:
+            indicators = payload.indicators
+            prediction = self.engine.predict(
+                df=df,
+                indicators=indicators,
+                smc_data=payload.smc_data,
+                symbol=payload.symbol,
+                timeframe=payload.timeframe,
+            )
+        except Exception as exc:
+            logger.error(f"MLHandler: prediction failed for {payload.symbol}: {exc}", exc_info=True)
+            return None  # Skip instead of returning neutral
+
+        logger.info(
+            f"ML prediction: {payload.symbol} | prob={prediction.probability_of_success:.2%} "
+            f"| confidence={prediction.confidence:.2%} | model={prediction.model_used} "
+            f"v{prediction.model_version}"
+        )
+
         return Event(
             event_type="MLPredictionCompleted",
             payload=MLPredictionCompleted(
                 symbol=payload.symbol,
                 timeframe=payload.timeframe,
-                probability=0.5,
-                confidence=0.0,
-                model_version="1.0.0",
-                feature_importance={},
-                prediction_explanation="ML skipped",
+                probability=prediction.probability_of_success,
+                confidence=prediction.confidence,
+                model_version=prediction.model_version,
+                feature_importance=prediction.feature_importance,
+                prediction_explanation=prediction.prediction_explanation,
             ),
             metadata=EventMetadata(source="ml_handler", priority=EventPriority.NORMAL),
         )

@@ -147,7 +147,7 @@ class TelegramBot:
 
     async def send_signal(self, signal: Dict[str, Any]) -> None:
         """Send a trading signal notification."""
-        classification = signal.get("classification", "")
+        # Remove classification filtering (let ApprovalHandler decide)
         message = self._format_signal_message(signal)
 
         # Send to channel if configured
@@ -156,7 +156,7 @@ class TelegramBot:
                 self.config.channel_id,
                 message,
                 signal.get("symbol", ""),
-                classification,
+                signal.get("classification", ""),
             )
 
         # Send to admin
@@ -164,7 +164,7 @@ class TelegramBot:
             self.config.admin_chat_id,
             message,
             signal.get("symbol", ""),
-            classification,
+            signal.get("classification", ""),
         )
 
     def _format_signal_message(self, signal: Dict[str, Any]) -> str:
