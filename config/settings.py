@@ -73,6 +73,36 @@ class ExchangeConfig(BaseModel):
 
 
 # =============================================================================
+# MULTI-EXCHANGE ADAPTER CONFIGURATION
+# =============================================================================
+
+class MultiExchangeConfig(BaseModel):
+    """Configuration for the modular exchange adapter system.
+
+    Adapters are tried in priority order; the first successful response wins.
+    Only public (unauthenticated) market-data endpoints are used.
+    """
+
+    # Priority list — lower index = higher priority
+    priority: List[str] = Field(
+        default=["gateio", "bitget", "okx", "mexc"],
+        description="Exchange priority order for market data (comma-separated env var: EXCHANGE_PRIORITY)",
+    )
+    # Health check interval (seconds) for background monitoring
+    health_check_interval_seconds: int = Field(default=60, ge=10, le=3600)
+    # Number of consecutive failures before an exchange is considered unhealthy
+    failover_after_errors: int = Field(default=3, ge=1, le=20)
+
+    @field_validator("priority", mode="before")
+    @classmethod
+    def parse_priority_string(cls, v: Any) -> List[str]:
+        """Accept comma-separated string from env var."""
+        if isinstance(v, str):
+            return [e.strip().lower() for e in v.split(",") if e.strip()]
+        return v
+
+
+# =============================================================================
 # MARKET DATA CONFIGURATION
 # =============================================================================
 
@@ -588,6 +618,7 @@ class AppConfig(BaseSettings):
 
     # Sub-configurations
     exchange: ExchangeConfig = Field(default=None)
+    multi_exchange: MultiExchangeConfig = Field(default_factory=MultiExchangeConfig)
     market_data: MarketDataConfig = Field(default_factory=MarketDataConfig)
     indicators: IndicatorConfig = Field(default_factory=IndicatorConfig)
     smc: SMCConfig = Field(default_factory=SMCConfig)
@@ -610,6 +641,12 @@ class AppConfig(BaseSettings):
             values["exchange"] = {
                 "access_key": os.environ.get("MEXC_ACCESS_KEY", ""),
                 "secret_key": os.environ.get("MEXC_SECRET_KEY", ""),
+            }
+        # Multi-exchange adapter config
+        if "multi_exchange" not in values or values["multi_exchange"] is None:
+            priority_str = os.environ.get("EXCHANGE_PRIORITY", "gateio,bitget,okx,mexc")
+            values["multi_exchange"] = {
+                "priority": [e.strip().lower() for e in priority_str.split(",") if e.strip()],
             }
         # Telegram credentials
         if "telegram" not in values or values["telegram"] is None:

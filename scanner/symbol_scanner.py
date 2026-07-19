@@ -20,6 +20,7 @@ from typing import Dict, List, Optional, Set
 
 from config.settings import MarketDataConfig, get_config
 from core.logging import get_logger
+from exchange.base import BaseExchangeClient
 
 logger = get_logger("scanner")
 
@@ -100,8 +101,8 @@ class SymbolScanner:
         asyncio.create_task(scanner.start_refresh_loop())
     """
 
-    def __init__(self, mexc_client: object, config: Optional[MarketDataConfig] = None) -> None:
-        self._client = mexc_client
+    def __init__(self, exchange_client: BaseExchangeClient, config: Optional[MarketDataConfig] = None) -> None:
+        self._client = exchange_client
         self._config: MarketDataConfig = config or get_config().market_data
         self._symbols: Dict[str, SymbolInfo] = {}
         self._filtered_symbols: List[str] = []

@@ -1,6 +1,7 @@
 """
 AXION QUANT V4 - MEXC Exchange Integration
 Async MEXC USDT-M Perpetual Futures API client with rate limiting, retries, and fault tolerance.
+Used as the fallback exchange when Gate.io / Bitget / OKX are unavailable.
 """
 
 from __future__ import annotations
@@ -18,8 +19,16 @@ import aiohttp
 
 from config.settings import ExchangeConfig, get_config
 from core.logging import get_logger
+from exchange.base import (
+    BaseExchangeClient,
+    RateLimiter as _BaseLimiter,
+    UnifiedCandle,
+    UnifiedContractInfo,
+    UnifiedOrderBook,
+    UnifiedTicker,
+)
 
-logger = get_logger("exchange")
+logger = get_logger("exchange.mexc")
 
 
 # =============================================================================
@@ -181,42 +190,42 @@ class RateLimiter:
 # MEXC CLIENT
 # =============================================================================
 
-class MEXCClient:
-    """Async MEXC USDT-M Perpetual Futures API client."""
+class MEXCClient(BaseExchangeClient):
+    """Async MEXC USDT-M Perpetual Futures API client (fallback exchange)."""
+
+    exchange_name = "mexc"
 
     # API Endpoints
     BASE_URL = "https://contract.mexc.com"
     API_VERSION = "/api/v1/contract"
 
     def __init__(self, config: Optional[ExchangeConfig] = None):
-        self.config = config or get_config().exchange
-        if self.config.futures_base_url:
+        try:
+            self.config = config or get_config().exchange
+        except Exception:
+            # Allow instantiation without valid MEXC credentials (used as fallback)
+            self.config = None  # type: ignore[assignment]
+        if self.config and self.config.futures_base_url:
             self.BASE_URL = self.config.futures_base_url.rstrip("/")
-        self.config = config or get_config().exchange
         self._session: Optional[aiohttp.ClientSession] = None
-        self._rate_limiter = RateLimiter(self.config.rate_limit_per_second)
+        rate = self.config.rate_limit_per_second if self.config else 10
+        self._rate_limiter = RateLimiter(rate)
         self._lock = asyncio.Lock()
 
         logger.info(
             "MEXC client initialized",
             extra={"event_data": {
                 "base_url": self.BASE_URL,
-                "rate_limit": self.config.rate_limit_per_second,
-                "testnet": self.config.testnet,
+                "rate_limit": rate,
+                "testnet": self.config.testnet if self.config else False,
             }}
         )
-
-    async def __aenter__(self) -> "MEXCClient":
-        await self.connect()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        await self.disconnect()
 
     async def connect(self) -> None:
         """Initialize HTTP session."""
         if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(total=self.config.timeout_seconds)
+            timeout_secs = self.config.timeout_seconds if self.config else 30
+            timeout = aiohttp.ClientTimeout(total=timeout_secs)
             self._session = aiohttp.ClientSession(
                 timeout=timeout,
                 headers={
@@ -313,19 +322,28 @@ class MEXCClient:
     # PUBLIC API METHODS
     # =============================================================================
 
-    async def get_contracts(self) -> List[MEXCContractInfo]:
+    async def get_contracts(self) -> List[UnifiedContractInfo]:
         """Get all active USDT-M perpetual futures contracts."""
         data = await self._request("GET", "/detail")
-        contracts = []
+        contracts: List[UnifiedContractInfo] = []
         for item in data:
-            contract = MEXCContractInfo.from_api_response(item)
-            # Log first few items to debug
+            raw = MEXCContractInfo.from_api_response(item)
             if len(contracts) < 3:
-                logger.debug(f"Contract debug: symbol={contract.symbol}, margin={contract.margin_asset}, status={contract.status}")
-            
-            # MEXC futures margin asset can be 'USDT'
-            if contract.margin_asset.upper() == "USDT":
-                contracts.append(contract)
+                logger.debug(f"Contract debug: symbol={raw.symbol}, margin={raw.margin_asset}, status={raw.status}")
+            if raw.margin_asset.upper() == "USDT":
+                contracts.append(
+                    UnifiedContractInfo(
+                        symbol=raw.symbol,
+                        base_asset=raw.base_asset,
+                        quote_asset=raw.quote_asset,
+                        contract_size=raw.contract_size,
+                        tick_size=raw.tick_size,
+                        min_order_size=raw.min_order_size,
+                        max_leverage=raw.max_leverage,
+                        status=raw.status,
+                        margin_asset=raw.margin_asset,
+                    )
+                )
         logger.info(f"Discovered {len(contracts)} USDT-M perpetual contracts")
         return contracts
 
@@ -336,7 +354,7 @@ class MEXCClient:
         start_time: Optional[int] = None,
         end_time: Optional[int] = None,
         limit: int = 500,
-    ) -> List[MEXCCandle]:
+    ) -> List[UnifiedCandle]:
         """Get OHLCV candlestick data from MEXC Futures API."""
         params = {"symbol": symbol, "interval": interval, "limit": limit}
         if start_time: params["startTime"] = start_time
@@ -344,12 +362,28 @@ class MEXCClient:
 
         try:
             data = await self._request("GET", "/kline", params, version_override="/api/v1")
-            return [MEXCCandle.from_api_response(symbol, item) for item in data]
+            candles: List[UnifiedCandle] = []
+            for item in data:
+                raw = MEXCCandle.from_api_response(symbol, item)
+                candles.append(
+                    UnifiedCandle(
+                        symbol=raw.symbol,
+                        timestamp=raw.timestamp,
+                        open=raw.open,
+                        high=raw.high,
+                        low=raw.low,
+                        close=raw.close,
+                        volume=raw.volume,
+                        quote_volume=raw.quote_volume,
+                        trades=raw.trades,
+                    )
+                )
+            return candles
         except MEXCAPIError as e:
             logger.error(f"Failed to fetch klines for {symbol}: {e}")
             return []
 
-    async def get_ticker(self, symbol: Optional[str] = None) -> List[MEXCTicker]:
+    async def get_ticker(self, symbol: Optional[str] = None) -> List[UnifiedTicker]:
         """Get 24h ticker statistics."""
         params = {}
         if symbol:
@@ -357,13 +391,29 @@ class MEXCClient:
 
         try:
             data = await self._request("GET", "/ticker", params)
-            if symbol:
-                return [MEXCTicker.from_api_response(data)]
-            return [MEXCTicker.from_api_response(item) for item in data]
+            raw_list = [MEXCTicker.from_api_response(data)] if symbol else [MEXCTicker.from_api_response(item) for item in data]
+            return [
+                UnifiedTicker(
+                    symbol=t.symbol,
+                    last_price=t.last_price,
+                    mark_price=t.mark_price,
+                    index_price=t.index_price,
+                    bid_price=t.bid_price,
+                    ask_price=t.ask_price,
+                    volume_24h=t.volume_24h,
+                    open_interest=t.open_interest,
+                    funding_rate=t.funding_rate,
+                    high_24h=t.high_24h,
+                    low_24h=t.low_24h,
+                    price_change_24h=t.price_change_24h,
+                    price_change_percent_24h=t.price_change_percent_24h,
+                )
+                for t in raw_list
+            ]
         except MEXCAPIError:
             return []
 
-    async def get_order_book(self, symbol: str, limit: int = 5) -> MEXCOrderBook:
+    async def get_order_book(self, symbol: str, limit: int = 5) -> UnifiedOrderBook:
         """Get order book depth."""
         params = {"symbol": symbol, "limit": limit}
         data = await self._request("GET", "/depth", params)
@@ -371,7 +421,7 @@ class MEXCClient:
         bids = [(float(b[0]), float(b[1])) for b in data.get("bids", [])]
         asks = [(float(a[0]), float(a[1])) for a in data.get("asks", [])]
 
-        return MEXCOrderBook(
+        return UnifiedOrderBook(
             symbol=symbol,
             bids=bids,
             asks=asks,

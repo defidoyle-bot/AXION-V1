@@ -2,6 +2,12 @@ modules = ["python-3.12"]
 
 [nix]
 channel = "stable-25_05"
+packages = ["cairo", "cargo", "ffmpeg-full", "freetype", "ghostscript", "glibcLocales", "gobject-introspection", "gtk3", "libiconv", "libxcrypt", "ocl-icd", "opencl-headers", "openssl", "pkg-config", "qhull", "rustc", "tcl", "tk", "xsimd"]
 
 [agent]
 expertMode = true
+
+[userenv]
+
+[userenv.shared]
+EXCHANGE_PRIORITY = "gateio,bitget,okx,mexc"

@@ -28,6 +28,7 @@ from core.events import (
 )
 from core.logging import setup_logging, get_logger, EventLogger
 from exchange.mexc_client import MEXCClient, MEXCCandle
+from exchange.adapter_manager import ExchangeAdapterManager
 from market_data.pipeline import (
     MarketDataPipeline, SymbolScanner, CandleValidator, NormalizedCandle,
 )
@@ -62,11 +63,18 @@ class MarketDataHandler(EventHandler):
         logger.info(f"Processing market data: {payload.symbol} {payload.timeframe}")
 
         # Use real candles from payload
+        # Timestamps may arrive as ISO strings (from NormalizedCandle.to_dict)
+        # or as integer ms — handle both.
+        def _parse_ts(ts: Any) -> int:
+            if isinstance(ts, (int, float)):
+                return int(ts)
+            return int(pd.Timestamp(ts).timestamp() * 1000)
+
         candles = [
             NormalizedCandle.from_mexc_candle(
                 MEXCCandle(
                     symbol=payload.symbol,
-                    timestamp=int(c["timestamp"]),
+                    timestamp=_parse_ts(c["timestamp"]),
                     open=float(c["open"]),
                     high=float(c["high"]),
                     low=float(c["low"]),
@@ -739,7 +747,7 @@ class AxionQuant:
         self.event_logger = EventLogger()
 
         # Initialize modules
-        self.mexc_client: Optional[MEXCClient] = None
+        self.mexc_client: Optional[ExchangeAdapterManager] = None
         self.market_pipeline: Optional[MarketDataPipeline] = None
         self.symbol_scanner: Optional[DedicatedSymbolScanner] = None
         self.telegram_bot: Optional[TelegramBot] = None
@@ -759,8 +767,8 @@ class AxionQuant:
         profile_desc = self.profile_manager.describe_active_profile()
         logger.info(f"Strategy profile: {profile_desc}")
 
-        # Initialize MEXC client
-        self.mexc_client = MEXCClient()
+        # Initialize exchange adapter manager (Gate.io → Bitget → OKX → MEXC fallback)
+        self.mexc_client = ExchangeAdapterManager()
         await self.mexc_client.connect()
 
         # Initialize the dedicated scanner module (symbol discovery & lifecycle)

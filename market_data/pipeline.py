@@ -16,7 +16,9 @@ import pandas as pd
 from config.settings import MarketDataConfig, Timeframe, get_config
 from core.events import Event, EventMetadata, EventPriority, MarketDataReceived, DataValidated
 from core.logging import get_logger
-from exchange.mexc_client import MEXCClient, MEXCCandle, MEXCContractInfo, MEXCTicker
+from exchange.base import BaseExchangeClient, UnifiedCandle
+# Keep MEXCCandle import for backward compat (from_mexc_candle accepts duck-typed input)
+from exchange.mexc_client import MEXCCandle, MEXCContractInfo, MEXCTicker
 
 logger = get_logger("market_data")
 
@@ -190,7 +192,7 @@ class SymbolScanner:
 
     def __init__(
         self,
-        client: MEXCClient,
+        client: BaseExchangeClient,
         config: Optional[MarketDataConfig] = None,
     ):
         self.client = client
@@ -300,7 +302,7 @@ class MarketDataPipeline:
 
     def __init__(
         self,
-        client: MEXCClient,
+        client: BaseExchangeClient,
         scanner: SymbolScanner,
         validator: CandleValidator,
         config: Optional[MarketDataConfig] = None,
