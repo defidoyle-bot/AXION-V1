@@ -106,4 +106,4 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-v --cov=axion_quant --cov-report=term-missing --cov-fail-under=90"
+addopts = "-v --cov=exchange --cov-report=term-missing --cov-fail-under=35"

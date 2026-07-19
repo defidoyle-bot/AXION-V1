@@ -32,7 +32,14 @@ logger = get_logger("exchange.adapter_manager")
 
 
 def _build_default_adapters() -> List[BaseExchangeClient]:
-    """Instantiate adapters in default priority order."""
+    """Instantiate adapters in default priority order.
+
+    Each adapter is constructed without requiring credentials — only the
+    public market-data endpoints are used. MEXC requires API keys for
+    authenticated endpoints but its *public* endpoints (klines, tickers,
+    contracts) work credential-free; the MEXCClient gracefully degrades
+    with internal defaults when no config is available.
+    """
     import os
 
     priority_str = os.environ.get("EXCHANGE_PRIORITY", "gateio,bitget,okx,mexc")
@@ -61,11 +68,19 @@ def _build_default_adapters() -> List[BaseExchangeClient]:
             adapters.append(cls())
             logger.info(f"Registered exchange adapter: {name}")
         except Exception as exc:
-            logger.warning(f"Could not instantiate {name} adapter: {exc}")
+            # Do not allow a single adapter's init failure to block the others
+            logger.warning(f"Could not instantiate {name} adapter: {exc} — skipping")
 
     if not adapters:
-        # Last resort — always try MEXC
-        adapters = [MEXCClient()]
+        logger.error(
+            "No exchange adapters could be registered. "
+            "Check EXCHANGE_PRIORITY and network access. "
+            "Attempting bare MEXC fallback."
+        )
+        try:
+            adapters = [MEXCClient()]
+        except Exception as exc:
+            raise ExchangeAdapterError(f"Failed to initialise any exchange adapter: {exc}") from exc
 
     return adapters
 

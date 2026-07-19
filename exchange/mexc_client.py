@@ -202,8 +202,10 @@ class MEXCClient(BaseExchangeClient):
     def __init__(self, config: Optional[ExchangeConfig] = None):
         try:
             self.config = config or get_config().exchange
-        except Exception:
-            # Allow instantiation without valid MEXC credentials (used as fallback)
+        except (Exception, SystemExit):
+            # Allow instantiation without valid MEXC credentials (used as fallback).
+            # ConfigLoader calls sys.exit(1) on validation failure; we catch that
+            # so the adapter manager can still register MEXC without crashing.
             self.config = None  # type: ignore[assignment]
         if self.config and self.config.futures_base_url:
             self.BASE_URL = self.config.futures_base_url.rstrip("/")
@@ -252,6 +254,16 @@ class MEXCClient(BaseExchangeClient):
         ).hexdigest()
         return signature
 
+    # Safe defaults used when self.config is None (credential-free fallback mode)
+    _DEFAULT_MAX_RETRIES: int = 3
+    _DEFAULT_BACKOFF: float = 1.0
+
+    def _max_retries(self) -> int:
+        return self.config.max_retries if self.config else self._DEFAULT_MAX_RETRIES
+
+    def _backoff(self) -> float:
+        return self.config.retry_backoff_seconds if self.config else self._DEFAULT_BACKOFF
+
     async def _request(
         self,
         method: str,
@@ -272,10 +284,15 @@ class MEXCClient(BaseExchangeClient):
         request_params = params or {}
 
         if authenticated:
+            if self.config is None:
+                raise MEXCAPIError("Authenticated requests require MEXC credentials")
             request_params["timestamp"] = int(time.time() * 1000)
             request_params["recvWindow"] = 5000
             request_params["signature"] = self._generate_signature(request_params)
             request_params["accessKey"] = self.config.access_key
+
+        max_retries = self._max_retries()
+        backoff = self._backoff()
 
         try:
             async with self._session.request(
@@ -287,8 +304,8 @@ class MEXCClient(BaseExchangeClient):
 
                 if response.status == 429:
                     # Rate limited - exponential backoff
-                    if retry_count < self.config.max_retries:
-                        wait = self.config.retry_backoff_seconds * (2 ** retry_count)
+                    if retry_count < max_retries:
+                        wait = backoff * (2 ** retry_count)
                         logger.warning(f"Rate limited, waiting {wait}s before retry {retry_count + 1}")
                         await asyncio.sleep(wait)
                         return await self._request(method, endpoint, params, authenticated, retry_count + 1, version_override)
@@ -296,8 +313,8 @@ class MEXCClient(BaseExchangeClient):
 
                 if response.status >= 500:
                     # Server error - retry
-                    if retry_count < self.config.max_retries:
-                        wait = self.config.retry_backoff_seconds * (2 ** retry_count)
+                    if retry_count < max_retries:
+                        wait = backoff * (2 ** retry_count)
                         logger.warning(f"Server error {response.status}, retrying in {wait}s")
                         await asyncio.sleep(wait)
                         return await self._request(method, endpoint, params, authenticated, retry_count + 1, version_override)
@@ -311,12 +328,12 @@ class MEXCClient(BaseExchangeClient):
                 return data.get("data", data)
 
         except aiohttp.ClientError as e:
-            if retry_count < self.config.max_retries:
-                wait = self.config.retry_backoff_seconds * (2 ** retry_count)
+            if retry_count < max_retries:
+                wait = backoff * (2 ** retry_count)
                 logger.warning(f"Request failed: {e}, retrying in {wait}s")
                 await asyncio.sleep(wait)
                 return await self._request(method, endpoint, params, authenticated, retry_count + 1, version_override)
-            raise MEXCAPIError(f"Request failed after {self.config.max_retries} retries: {e}")
+            raise MEXCAPIError(f"Request failed after {max_retries} retries: {e}")
 
     # =============================================================================
     # PUBLIC API METHODS
