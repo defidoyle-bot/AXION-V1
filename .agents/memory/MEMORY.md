@@ -1,1 +1,2 @@
 - [ExchangeManager integration](exchange-manager-integration.md) — ExchangeManager is the single market-data entry point; all code goes through it, not individual clients.
+- [Directional scoring bias](directional-scoring-bias.md) — Hardcoding trend inputs to one direction systematically under-scores the opposite side; derive thttps://chat.whatsapp.com/D5tdeRl5P6sJqM34ARWAEphem from live SMC structure instead.

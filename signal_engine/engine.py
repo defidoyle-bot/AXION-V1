@@ -363,11 +363,13 @@ class SignalScoringEngine:
 
         # RSI
         if "rsi" in indicators:
-            rsi = indicators["rsi"]
+            rsi = max(0, min(100, float(indicators["rsi"])))
             if direction == "LONG":
-                scores.append(100 - rsi if rsi > 50 else rsi * 2)
+                # Longs benefit from lower RSI (oversold-to-neutral room to rise)
+                scores.append(100 - rsi)
             else:
-                scores.append(rsi if rsi > 50 else (100 - rsi) * 2)
+                # Shorts benefit from higher RSI (overbought-to-neutral room to fall)
+                scores.append(rsi)
 
         # MACD
         if "macd_above_signal" in indicators:

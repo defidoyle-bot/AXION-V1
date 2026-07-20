@@ -533,12 +533,26 @@ class SignalHandler(EventHandler):
             logger.warning(f"SignalHandler: risk rejected {payload.symbol}")
             return None
 
+        # Derive trend alignment from the actual SMC structure instead of
+        # hardcoding bullish. This prevents every SHORT from starting with a
+        # trend penalty and makes LONG/SHORT scoring symmetric.
+        structure = str(payload.smc_data.get("current_structure", "UNKNOWN")).upper()
+        if structure == "UPTREND":
+            higher_tf_trend = {"direction": "bullish", "strength": 0.8}
+            lower_tf_trend = {"direction": "bullish", "momentum": 0.7}
+        elif structure == "DOWNTREND":
+            higher_tf_trend = {"direction": "bearish", "strength": 0.8}
+            lower_tf_trend = {"direction": "bearish", "momentum": 0.7}
+        else:
+            higher_tf_trend = {"direction": "neutral", "strength": 0.5}
+            lower_tf_trend = {"direction": "neutral", "momentum": 0.5}
+
         # Use SignalConfig weights
         score = self.engine.score_signal(
             symbol=payload.symbol,
             direction=payload.direction,
-            higher_tf_trend={"direction": "bullish", "strength": 0.8},
-            lower_tf_trend={"direction": "bullish", "momentum": 0.7},
+            higher_tf_trend=higher_tf_trend,
+            lower_tf_trend=lower_tf_trend,
             technical_indicators=payload.indicators,
             smc_analysis=payload.smc_data,
             liquidity_context={"spread_percent": 0.05, "depth_usdt": 5000000},
