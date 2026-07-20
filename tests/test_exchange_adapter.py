@@ -68,9 +68,15 @@ def _make_orderbook(symbol: str = "BTC_USDT") -> UnifiedOrderBook:
 
 
 class _MockAdapter(BaseExchangeClient):
-    """Fully controllable mock adapter for testing."""
+    """Fully controllable mock adapter for testing.
 
-    exchange_name = "mock"
+    Mirrors the interface of real adapters (gate.py, bitget.py, etc.):
+      - name    → str  property matching self.exchange_name
+      - get_symbols()  → List[str]  (symbol strings, not contract objects)
+      - health_check() → bool       (True / False, same as real adapters)
+    """
+
+    name = "mock"
 
     def __init__(
         self,
@@ -79,11 +85,17 @@ class _MockAdapter(BaseExchangeClient):
         raises: Optional[Exception] = None,
     ):
         self.exchange_name = name
+        self.name = name
         self._healthy = healthy
         self._raises = raises
 
     async def connect(self) -> None: pass
     async def disconnect(self) -> None: pass
+    async def close(self) -> None: pass
+
+    async def get_symbols(self) -> List[str]:
+        if self._raises: raise self._raises
+        return ["BTC_USDT"] if self._healthy else []
 
     async def get_contracts(self) -> List[UnifiedContractInfo]:
         if self._raises: raise self._raises
@@ -113,8 +125,7 @@ class _MockAdapter(BaseExchangeClient):
 
     async def health_check(self):
         if self._raises: raise self._raises
-        status = "healthy" if self._healthy else "unhealthy"
-        return {"status": status, "exchange": self.exchange_name}
+        return self._healthy
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +247,115 @@ class TestAdapterManagerFallback:
         mgr = ExchangeAdapterManager(adapters=[a1, a2])
         health = await mgr.health_check()
         assert health["status"] == "unhealthy"
+
+
+# ---------------------------------------------------------------------------
+# ExchangeManager (manager.py) — new canonical entry point
+# ---------------------------------------------------------------------------
+
+class TestExchangeManager:
+    """Verify ExchangeManager with the new adapter files (gate.py etc.)."""
+
+    @pytest.mark.asyncio
+    async def test_manager_uses_first_healthy_adapter(self):
+        gate   = _MockAdapter("gate",   healthy=True)
+        bitget = _MockAdapter("bitget", healthy=True)
+        from exchange.manager import ExchangeManager
+        mgr = ExchangeManager(adapters=[gate, bitget])
+        result = await mgr.get_klines("BTC_USDT", "1h", limit=3)
+        assert len(result) > 0
+        assert mgr.active_exchange == "gate"
+
+    @pytest.mark.asyncio
+    async def test_manager_falls_back_on_exception(self):
+        gate   = _MockAdapter("gate",   raises=ConnectionError("geo-blocked"))
+        bitget = _MockAdapter("bitget", healthy=True)
+        from exchange.manager import ExchangeManager
+        mgr = ExchangeManager(adapters=[gate, bitget])
+        result = await mgr.get_symbols()
+        assert len(result) > 0
+        assert mgr.active_exchange == "bitget"
+
+    @pytest.mark.asyncio
+    async def test_manager_falls_back_on_empty(self):
+        gate   = _MockAdapter("gate",   healthy=False)   # returns []
+        bitget = _MockAdapter("bitget", healthy=True)
+        from exchange.manager import ExchangeManager
+        mgr = ExchangeManager(adapters=[gate, bitget])
+        result = await mgr.get_symbols()
+        assert len(result) > 0
+        assert mgr.active_exchange == "bitget"
+
+    @pytest.mark.asyncio
+    async def test_manager_get_order_book_fallback(self):
+        """get_order_book must return empty UnifiedOrderBook (not raise) on total failure."""
+        a1 = _MockAdapter("gate",   raises=RuntimeError("fail"))
+        a2 = _MockAdapter("bitget", raises=RuntimeError("fail"))
+        from exchange.manager import ExchangeManager, UnifiedOrderBook
+        mgr = ExchangeManager(adapters=[a1, a2])
+        ob = await mgr.get_order_book("BTC_USDT")
+        assert isinstance(ob, UnifiedOrderBook)
+        assert ob.bids == []
+
+    @pytest.mark.asyncio
+    async def test_manager_get_open_interest_no_exception_fallback(self):
+        """get_open_interest returns 0.0 on total failure, never raises."""
+        a1 = _MockAdapter("gate",   raises=RuntimeError("fail"))
+        a2 = _MockAdapter("bitget", raises=RuntimeError("fail"))
+        from exchange.manager import ExchangeManager
+        mgr = ExchangeManager(adapters=[a1, a2])
+        oi = await mgr.get_open_interest("BTC_USDT")
+        assert oi == 0.0
+
+    @pytest.mark.asyncio
+    async def test_manager_health_check_structure(self):
+        healthy = _MockAdapter("gate",   healthy=True)
+        blocked = _MockAdapter("bybit",  raises=RuntimeError("403 geo-blocked"))
+        from exchange.manager import ExchangeManager
+        mgr = ExchangeManager(adapters=[healthy, blocked])
+        health = await mgr.health_check()
+        assert health["status"] == "healthy"
+        assert health["active_exchange"] == "gate"
+        assert health["exchanges"]["gate"]["status"]  == "healthy"
+        assert health["exchanges"]["bybit"]["status"] != "healthy"
+
+    @pytest.mark.asyncio
+    async def test_manager_get_funding_rate_returns_dict(self):
+        """get_funding_rate must return a dict even on total failure."""
+        a1 = _MockAdapter("gate", raises=RuntimeError("fail"))
+        from exchange.manager import ExchangeManager
+        mgr = ExchangeManager(adapters=[a1])
+        fr = await mgr.get_funding_rate("BTC_USDT")
+        assert isinstance(fr, dict)
+        assert "fundingRate" in fr
+
+    @pytest.mark.asyncio
+    async def test_manager_connect_tolerates_adapter_failure(self):
+        """connect() must not raise even if individual adapters fail to connect."""
+        class BrokenAdapter(_MockAdapter):
+            async def connect(self):
+                raise RuntimeError("can't connect")
+        broken = BrokenAdapter("broken")
+        good   = _MockAdapter("good", healthy=True)
+        from exchange.manager import ExchangeManager
+        mgr = ExchangeManager(adapters=[broken, good])
+        # Should not raise
+        await mgr.connect()
+
+    @pytest.mark.asyncio
+    async def test_manager_consistent_exchange_during_scan(self):
+        """Once an exchange is selected it is reused for subsequent calls."""
+        gate   = _MockAdapter("gate",   healthy=True)
+        bitget = _MockAdapter("bitget", healthy=True)
+        from exchange.manager import ExchangeManager
+        mgr = ExchangeManager(adapters=[gate, bitget])
+        # First call picks gate
+        await mgr.get_symbols()
+        assert mgr.active_exchange == "gate"
+        # Second and third calls must still use gate
+        await mgr.get_klines("BTC_USDT", "1h", limit=3)
+        await mgr.get_ticker("BTC_USDT")
+        assert mgr.active_exchange == "gate"
 
 
 # ---------------------------------------------------------------------------

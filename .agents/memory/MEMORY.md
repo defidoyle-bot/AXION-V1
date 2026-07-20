@@ -1,0 +1,1 @@
+- [ExchangeManager integration](exchange-manager-integration.md) — ExchangeManager is the single market-data entry point; all code goes through it, not individual clients.

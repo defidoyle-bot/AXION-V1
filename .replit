@@ -10,4 +10,4 @@ expertMode = true
 [userenv]
 
 [userenv.shared]
-EXCHANGE_PRIORITY = "gateio,bitget,okx,mexc"
+EXCHANGE_PRIORITY = "gate,bitget,okx,bybit,mexc"

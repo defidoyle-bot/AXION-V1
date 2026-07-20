@@ -28,7 +28,8 @@ from core.events import (
 )
 from core.logging import setup_logging, get_logger, EventLogger
 from exchange.mexc_client import MEXCClient, MEXCCandle
-from exchange.adapter_manager import ExchangeAdapterManager
+from exchange.adapter_manager import ExchangeAdapterManager          # kept for compat
+from exchange.manager import ExchangeManager
 from market_data.pipeline import (
     MarketDataPipeline, SymbolScanner, CandleValidator, NormalizedCandle,
 )
@@ -747,7 +748,7 @@ class AxionQuant:
         self.event_logger = EventLogger()
 
         # Initialize modules
-        self.mexc_client: Optional[ExchangeAdapterManager] = None
+        self.mexc_client: Optional[ExchangeManager] = None   # named for compat; backed by ExchangeManager
         self.market_pipeline: Optional[MarketDataPipeline] = None
         self.symbol_scanner: Optional[DedicatedSymbolScanner] = None
         self.telegram_bot: Optional[TelegramBot] = None
@@ -767,8 +768,9 @@ class AxionQuant:
         profile_desc = self.profile_manager.describe_active_profile()
         logger.info(f"Strategy profile: {profile_desc}")
 
-        # Initialize exchange adapter manager (Gate.io → Bitget → OKX → MEXC fallback)
-        self.mexc_client = ExchangeAdapterManager()
+        # Initialize ExchangeManager (Gate.io → Bitget → OKX → Bybit → MEXC fallback)
+        # Public market-data only — no API credentials required.
+        self.mexc_client = ExchangeManager()
         await self.mexc_client.connect()
 
         # Initialize the dedicated scanner module (symbol discovery & lifecycle)
@@ -881,7 +883,7 @@ class AxionQuant:
         if self.telegram_bot:
             await self.telegram_bot.stop()
 
-        # Close MEXC client
+        # Close exchange manager
         if self.mexc_client:
             await self.mexc_client.disconnect()
 

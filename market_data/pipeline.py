@@ -203,7 +203,7 @@ class SymbolScanner:
 
     async def refresh_symbols(self) -> List[str]:
         """Refresh the list of active symbols from exchange."""
-        logger.info("Refreshing symbol list from MEXC...")
+        logger.info("Refreshing symbol list from exchange...")
 
         try:
             contracts = await self.client.get_contracts()

@@ -214,9 +214,14 @@ class ExchangeAdapterManager(BaseExchangeClient):
         for adapter, check in zip(self._adapters, checks):
             if isinstance(check, Exception):
                 results[adapter.exchange_name] = {"status": "unhealthy", "error": str(check)}
-            else:
+            elif isinstance(check, dict):
                 results[adapter.exchange_name] = check
                 if check.get("status") == "healthy":
+                    any_healthy = True
+            else:
+                # health_check returns bool (True/False) as per adapter convention
+                results[adapter.exchange_name] = {"status": "healthy" if check else "unhealthy"}
+                if check:
                     any_healthy = True
 
         overall_status = "healthy" if any_healthy else "unhealthy"

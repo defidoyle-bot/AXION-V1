@@ -1,10 +1,10 @@
 """
 AXION QUANT V4 - Symbol Scanner
-Automatic discovery and lifecycle management of MEXC USDT-M Perpetual Futures contracts.
+Automatic discovery and lifecycle management of USDT-M Perpetual Futures contracts.
 
 Responsibilities
 ----------------
-- Discover all active USDT perpetual futures contracts via MEXC API.
+- Discover all active USDT perpetual futures contracts via ExchangeManager.
 - Filter out spot, delisted, paused, maintenance, and non-USDT contracts.
 - Apply configurable market filters (volume, open interest, spread, etc.).
 - Periodically refresh the active symbol list.
@@ -200,31 +200,32 @@ class SymbolScanner:
     # ------------------------------------------------------------------
 
     async def _fetch_all_contracts(self) -> List[SymbolInfo]:
-        """Retrieve all futures contract definitions from MEXC via the exchange client."""
+        """Retrieve all USDT perpetual futures symbols from the active exchange via ExchangeManager."""
         try:
-            markets = await self._client.get_contracts()
+            symbols = await self._client.get_symbols()
         except Exception as exc:
-            raise RuntimeError(f"MEXC markets fetch failed: {exc}") from exc
+            raise RuntimeError(f"Exchange markets fetch failed: {exc}") from exc
 
         symbol_infos: List[SymbolInfo] = []
-        for m in markets:
+        for sym in symbols:
+            if not sym:
+                continue
             try:
-                # m is a MEXCContractInfo dataclass
+                base = sym.split("_")[0] if "_" in sym else sym
                 info = SymbolInfo(
-                    symbol=m.symbol,
-                    base_asset=m.base_asset,
-                    quote_asset=m.quote_asset,
-                    contract_type="PERPETUAL",  # get_contracts() only returns perpetuals
-                    status=m.status.upper() if m.status else "TRADING",
-                    tick_size=m.tick_size,
-                    lot_size=m.min_order_size,
-                    min_qty=m.min_order_size,
-                    max_leverage=m.max_leverage,
+                    symbol=sym,
+                    base_asset=base,
+                    quote_asset="USDT",
+                    contract_type="PERPETUAL",
+                    status="TRADING",
+                    tick_size=0.01,
+                    lot_size=1,
+                    min_qty=1,
+                    max_leverage=125,
                 )
-                if info.symbol:
-                    symbol_infos.append(info)
+                symbol_infos.append(info)
             except (AttributeError, ValueError, TypeError) as exc:
-                logger.debug(f"Scanner: skipped malformed contract entry: {exc}")
+                logger.debug(f"Scanner: skipped malformed symbol entry '{sym}': {exc}")
 
         return symbol_infos
 
