@@ -54,8 +54,8 @@ class LogLevel(str, Enum):
 class ExchangeConfig(BaseModel):
     """MEXC exchange configuration."""
 
-    access_key: str = Field(default="", description="MEXC API access key")
-    secret_key: str = Field(default="", description="MEXC API secret key")
+    access_key: str = Field(default="", description="MEXC API access key (no longer required — all endpoints are public)")
+    secret_key: str = Field(default="", description="MEXC API secret key (no longer required — all endpoints are public)")
     base_url: str = Field(default="https://api.mexc.com", description="MEXC API base URL")
     futures_base_url: str = Field(default="https://contract.mexc.com", description="MEXC futures API base URL")
     testnet: bool = Field(default=True, description="Use testnet environment")
@@ -67,8 +67,9 @@ class ExchangeConfig(BaseModel):
     @field_validator("access_key", "secret_key")
     @classmethod
     def validate_not_placeholder(cls, v: str) -> str:
+        """Reject placeholder values but allow empty (credentials are optional)."""
         if v and ("your_" in v.lower() or "test" in v.lower()):
-            raise ValueError("Exchange credentials cannot be placeholder values")
+            raise ValueError("Exchange credentials must be provided correctly — no placeholders allowed. Set empty string to skip credential checks.")
         return v.strip() if v else ""
 
 
@@ -329,8 +330,8 @@ class SignalConfig(BaseModel):
     institutional_grade_threshold: int = Field(default=80, ge=20, le=100)
     premium_threshold: int = Field(default=65, ge=20, le=95)
     strong_threshold: int = Field(default=50, ge=20, le=90)
-    standard_threshold: int = Field(default=35, ge=20, le=80)
-    watchlist_threshold: int = Field(default=25, ge=20, le=70)
+    standard_threshold: int = Field(default=20, ge=20, le=80)
+    watchlist_threshold: int = Field(default=19, ge=19, le=70)
 
     # Adaptive thresholds
     adaptive_scoring_enabled: bool = Field(default=True)
@@ -439,7 +440,7 @@ class RiskConfig(BaseModel):
 
     # Take Profit
     take_profit_method: TakeProfitMethod = Field(default=TakeProfitMethod.FIXED_RR)
-    min_risk_reward: float = Field(default=1.2, ge=1.0, le=10.0)
+    min_risk_reward: float = Field(default=1.0, ge=1.0, le=10.0)
     target_risk_reward: float = Field(default=2.0, ge=1.0, le=10.0)
     atr_tp_multiplier: float = Field(default=3.0, ge=0.5, le=10.0)
 

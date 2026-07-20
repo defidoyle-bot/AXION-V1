@@ -255,20 +255,9 @@ class SymbolScanner:
     async def _apply_market_filters(
         self, symbols: List[SymbolInfo], stats: ScannerStats
     ) -> List[SymbolInfo]:
-        passed = []
-        for info in symbols:
-            try:
-                ticker = await self._client.get_ticker(info.symbol)
-                t = ticker[0] if isinstance(ticker, list) and ticker else ticker
-                vol_24h = float(t.volume_24h) if hasattr(t, "volume_24h") else 0
-                oi = float(t.open_interest) if hasattr(t, "open_interest") else 0
-                bid = float(t.bid_price) if hasattr(t, "bid_price") else 0
-                ask = float(t.ask_price) if hasattr(t, "ask_price") else 0
-                spread = (ask - bid) / bid if bid > 0 else 999
-
-                # Apply filters...
-                passed.append(info)
-            except Exception as e:
-                logger.warning(f"Scanner: could not fetch ticker for {info.symbol}: {e}")
-                passed.append(info)  # Keep symbol even if ticker fails
-        return passed
+        # Market filters (volume, OI, spread) intentionally disabled — all
+        # active USDT perpetual symbols pass through. Config defaults
+        # (min_24h_volume_usdt=0, min_open_interest_usdt=0) already mean
+        # no symbols are blocked. Skip expensive per-symbol ticker fetches
+        # (800+ API calls/cycle with zero filtering benefit).
+        return list(symbols)

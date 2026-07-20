@@ -354,6 +354,10 @@ class MLHandler(EventHandler):
                 model_version=prediction.model_version,
                 feature_importance=prediction.feature_importance,
                 prediction_explanation=prediction.prediction_explanation,
+                # Forward candle data for downstream handlers (RiskHandler needs these)
+                candles=payload.candles,
+                indicators=payload.indicators,
+                smc_data=payload.smc_data,
             ),
             metadata=EventMetadata(source="ml_handler", priority=EventPriority.NORMAL),
         )
@@ -538,7 +542,7 @@ class SignalHandler(EventHandler):
             liquidity_context={"spread_percent": 0.05, "depth_usdt": 5000000},
             volume_data={"relative_volume": 1.5, "volume_trend": "increasing"},
             market_regime=payload.smc_data.get("current_structure", "UNKNOWN"),
-            ml_prediction=payload,
+            ml_prediction=payload.ml_prediction,
             risk_assessment=payload.risk_assessment,
         )
 
@@ -855,7 +859,7 @@ class AxionQuant:
     async def _scan_cycle(self) -> None:
         """Perform one scan cycle."""
         try:
-            symbols = await self.market_pipeline.scanner.get_symbols()
+            symbols = self.symbol_scanner.get_symbols()
 
             for symbol in symbols[:20]:  # Limit to 20 symbols per cycle for performance
                 for timeframe in self.config.market_data.timeframes:
