@@ -167,6 +167,7 @@ class SignalScored:
     stop_loss: float = 0.0
     take_profit: List[float] = field(default_factory=list)
     leverage: int = 5
+    indicators: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass(frozen=True, slots=True)
 class SignalApproved:
@@ -188,6 +189,7 @@ class SignalApproved:
     market_regime: str = "unknown"
     smc_summary: str = ""
     risk_status: str = ""
+    indicators: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass(frozen=True, slots=True)
 class TelegramNotificationSent:

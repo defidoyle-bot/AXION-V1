@@ -569,6 +569,7 @@ class SignalHandler(EventHandler):
                 stop_loss=payload.stop_loss,
                 take_profit=payload.take_profit,
                 leverage=payload.leverage,
+                indicators=payload.indicators,
             ),
             metadata=EventMetadata(source="signal_handler", priority=EventPriority.HIGH),
         )
@@ -640,6 +641,31 @@ class ApprovalHandler(EventHandler):
             f"score={payload.score} entry={entry_price:.6f} sl={stop_loss:.6f}"
         )
 
+        # Extract indicator snapshot from the scored signal
+        indicators = getattr(payload, "indicators", {})
+
+        # Build derived features from indicators
+        ind_atr = indicators.get("atr", 0.0)
+        entry = entry_price or 0.0001
+        atr_pct = float(ind_atr / entry * 100) if entry > 0 and ind_atr else 0.0
+
+        rsi_val = float(indicators.get("rsi", 50))
+
+        # Extract BB width if available
+        bb_upper = indicators.get("bb_upper")
+        bb_lower = indicators.get("bb_lower")
+        bb_mid = indicators.get("bb_middle")
+        bb_width = 0.0
+        bb_position = 0.5
+        if bb_upper and bb_lower and bb_mid and bb_mid != 0:
+            bb_width = float((bb_upper - bb_lower) / bb_mid)
+            bb_position = float((entry - bb_lower) / (bb_upper - bb_lower)) if bb_upper != bb_lower else 0.5
+
+        macd_hist = float(indicators.get("macd_histogram", 0.0))
+        adx_val = float(indicators.get("adx", 0.0))
+
+        vol_24h = float(indicators.get("obv", 0.0))
+
         return Event(
             event_type="SignalApproved",
             payload=SignalApproved(
@@ -660,6 +686,17 @@ class ApprovalHandler(EventHandler):
                 market_regime=smc.get("current_structure", "unknown"),
                 smc_summary=f"{len(smc.get('order_blocks', []))} OBs, {len(smc.get('fvgs', []))} FVGs",
                 risk_status="Approved",
+                indicators={
+                    "atr_percent": atr_pct,
+                    "rsi": rsi_val,
+                    "bb_width": bb_width,
+                    "bb_position": bb_position,
+                    "macd_histogram": macd_hist,
+                    "adx": adx_val,
+                    "volume_24h": vol_24h,
+                    "spread_pct": float(indicators.get("vwap_deviation", 0.0)),
+                    "margin_required": risk.get("margin_required", 0.0),
+                },
             ),
             metadata=EventMetadata(source="approval_handler", priority=EventPriority.HIGH),
         )
@@ -715,6 +752,17 @@ class HybridMLHandler(EventHandler):
             "classification": payload.classification,
             "risk_reward": payload.risk_reward,
             "market_regime": payload.market_regime,
+            "margin": getattr(payload, "indicators", {}).get("margin_required", 0.0),
+            "atr_percent": getattr(payload, "indicators", {}).get("atr_percent", 0.0),
+            "rsi": getattr(payload, "indicators", {}).get("rsi", 50),
+            "spread": abs(getattr(payload, "indicators", {}).get("spread_pct", 0.0)),
+            "volume_24h": getattr(payload, "indicators", {}).get("volume_24h", 0.0),
+            "bb_width": getattr(payload, "indicators", {}).get("bb_width", 0.0),
+            "bb_position": getattr(payload, "indicators", {}).get("bb_position", 0.5),
+            "macd_histogram": getattr(payload, "indicators", {}).get("macd_histogram", 0.0),
+            "adx": getattr(payload, "indicators", {}).get("adx", 0.0),
+            "ml_probability": payload.ml_probability,
+            "ml_confidence": payload.ml_confidence,
         }
 
         # Build account context for RL state
@@ -1016,13 +1064,15 @@ class AxionQuant:
                     "pnl": trade.pnl,
                     "pnl_percent": trade.pnl_percent,
                     "status": trade.status.value if hasattr(trade.status, 'value') else str(trade.status),
-                    "market_regime": getattr(trade, 'market_regime', 'unknown'),
-                    "risk_reward": getattr(trade, 'risk_reward', 0.0),
-                    "score": getattr(trade, 'score', 0),
-                    "atr_percent": getattr(trade, 'atr_percent', 0),
-                    "rsi": getattr(trade, 'rsi', 50),
-                    "spread": getattr(trade, 'spread', 0),
-                    "volume_24h": getattr(trade, 'volume_24h', 0),
+                    "market_regime": trade.market_regime,
+                    "risk_reward": trade.risk_reward,
+                    "score": trade.score,
+                    "atr_percent": trade.atr_percent,
+                    "rsi": trade.rsi,
+                    "spread": trade.spread,
+                    "volume_24h": trade.volume_24h,
+                    "ml_probability": trade.ml_probability,
+                    "ml_confidence": trade.ml_confidence,
                 })
 
         if not completed_trades:

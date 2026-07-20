@@ -95,6 +95,17 @@ class TradeFeatureEngineer:
         features["risk_reward"] = float(trade.get("risk_reward", 0))
         features["score"] = float(trade.get("score", 0))
 
+        # ── New enriched features from indicator snapshot ─────────────────
+        # ML model confidence
+        features["ml_probability"] = float(trade.get("ml_probability", 0.0))
+        features["ml_confidence"] = float(trade.get("ml_confidence", 0.0))
+
+        # Volatility & momentum
+        features["bb_width"] = float(trade.get("bb_width", 0.0))
+        features["bb_position"] = float(trade.get("bb_position", 0.5))
+        features["macd_histogram"] = float(trade.get("macd_histogram", 0.0))
+        features["adx"] = float(trade.get("adx", 0.0))
+
         return features
 
     @staticmethod

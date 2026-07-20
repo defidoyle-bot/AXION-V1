@@ -126,7 +126,7 @@ class PaperTradingEngine:
         else:
             executed_price = entry_price * (1 - slippage)
 
-        # Create trade
+        # Create trade with market context snapshot
         trade = Trade(
             trade_id=f"paper_{datetime.utcnow().timestamp()}",
             signal_id=signal.get("signal_id", ""),
@@ -141,6 +141,15 @@ class PaperTradingEngine:
             status=TradeStatus.OPEN,
             created_at=datetime.utcnow(),
             opened_at=datetime.utcnow(),
+            score=signal.get("score", 0),
+            market_regime=signal.get("market_regime", "unknown"),
+            risk_reward=signal.get("risk_reward", 0.0),
+            atr_percent=signal.get("atr_percent", 0.0),
+            rsi=signal.get("rsi", 50.0),
+            spread=signal.get("spread", 0.0),
+            volume_24h=signal.get("volume_24h", 0.0),
+            ml_probability=signal.get("ml_probability", 0.0),
+            ml_confidence=signal.get("ml_confidence", 0.0),
         )
 
         # Update account

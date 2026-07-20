@@ -125,6 +125,17 @@ class Trade:
     mfe: float = 0.0  # Max favorable excursion
     mae: float = 0.0  # Max adverse excursion
 
+    # Market context at entry (populated by paper trading engine)
+    score: int = 0
+    market_regime: str = "unknown"
+    risk_reward: float = 0.0
+    atr_percent: float = 0.0
+    rsi: float = 50.0
+    spread: float = 0.0
+    volume_24h: float = 0.0
+    ml_probability: float = 0.0
+    ml_confidence: float = 0.0
+
     def calculate_pnl(self, exit_price: float, fee_rate: float = 0.0006) -> float:
         """Calculate P&L for the trade."""
         price_diff = exit_price - self.entry_price
