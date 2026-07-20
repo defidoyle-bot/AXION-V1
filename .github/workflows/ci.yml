@@ -22,8 +22,7 @@ jobs:
       - name: Run market scan
         run: timeout 600 python main.py --mode paper || true
         env:
-          MEXC_ACCESS_KEY: ${{ secrets.MEXC_ACCESS_KEY }}
-          MEXC_SECRET_KEY: ${{ secrets.MEXC_SECRET_KEY }}
+          EXCHANGE_PRIORITY: "gate,bitget,okx,mexc"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}

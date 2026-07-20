@@ -54,8 +54,8 @@ class LogLevel(str, Enum):
 class ExchangeConfig(BaseModel):
     """MEXC exchange configuration."""
 
-    access_key: str = Field(..., description="MEXC API access key")
-    secret_key: str = Field(..., description="MEXC API secret key")
+    access_key: str = Field(default="", description="MEXC API access key")
+    secret_key: str = Field(default="", description="MEXC API secret key")
     base_url: str = Field(default="https://api.mexc.com", description="MEXC API base URL")
     futures_base_url: str = Field(default="https://contract.mexc.com", description="MEXC futures API base URL")
     testnet: bool = Field(default=True, description="Use testnet environment")
@@ -66,10 +66,10 @@ class ExchangeConfig(BaseModel):
 
     @field_validator("access_key", "secret_key")
     @classmethod
-    def validate_not_empty(cls, v: str) -> str:
-        if not v or v.strip() == "" or "your_" in v.lower() or "test" in v.lower():
-            raise ValueError("Exchange credentials must be provided and cannot be placeholder values")
-        return v.strip()
+    def validate_not_placeholder(cls, v: str) -> str:
+        if v and ("your_" in v.lower() or "test" in v.lower()):
+            raise ValueError("Exchange credentials cannot be placeholder values")
+        return v.strip() if v else ""
 
 
 # =============================================================================
@@ -517,9 +517,9 @@ class TelegramConfig(BaseModel):
     @field_validator("bot_token", "admin_chat_id")
     @classmethod
     def validate_telegram_credentials(cls, v: str) -> str:
-        if not v or v.strip() == "" or "your_" in v.lower():
-            raise ValueError("Telegram credentials must be provided and cannot be placeholder values")
-        return v.strip()
+        if v and "your_" in v.lower():
+            raise ValueError("Telegram credentials cannot be placeholder values")
+        return v.strip() if v else ""
 
 
 # =============================================================================

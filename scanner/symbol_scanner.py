@@ -200,11 +200,34 @@ class SymbolScanner:
     # ------------------------------------------------------------------
 
     async def _fetch_all_contracts(self) -> List[SymbolInfo]:
-        """Retrieve all USDT perpetual futures symbols from the active exchange via ExchangeManager."""
+        """Retrieve all USDT perpetual futures symbols and metadata from the active exchange."""
         try:
+            # Try to get full contract metadata first
+            contracts = await self._client.get_contracts()
+            if contracts:
+                return [
+                    SymbolInfo(
+                        symbol=c.symbol,
+                        base_asset=c.base_asset,
+                        quote_asset=c.quote_asset,
+                        contract_type="PERPETUAL",
+                        status=c.status,
+                        tick_size=c.tick_size,
+                        lot_size=c.min_order_size,
+                        min_qty=c.min_order_size,
+                        max_leverage=int(c.max_leverage),
+                    )
+                    for c in contracts
+                ]
+            
+            # Fallback to just symbols if get_contracts fails or is empty
             symbols = await self._client.get_symbols()
         except Exception as exc:
-            raise RuntimeError(f"Exchange markets fetch failed: {exc}") from exc
+            logger.warning(f"Scanner: get_contracts failed, falling back to get_symbols: {exc}")
+            try:
+                symbols = await self._client.get_symbols()
+            except Exception as e:
+                raise RuntimeError(f"Exchange markets fetch failed: {e}") from e
 
         symbol_infos: List[SymbolInfo] = []
         for sym in symbols:
