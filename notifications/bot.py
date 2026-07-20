@@ -197,16 +197,19 @@ class TelegramBot:
         # Direction emoji
         dir_emoji = "🟢 LONG" if direction == "LONG" else "🔴 SHORT"
 
+        # Use 6 decimals for sub-dollar prices, 2 for everything else
+        decimals = 6 if entry < 1.0 else 2
+
         message = f"""
 {emoji} <b>{classification.upper()}</b>
 <b>{symbol}</b> · {dir_emoji}
 
-📍 <b>Entry:</b> {entry:,.2f}
-🛑 <b>Stop Loss:</b> {sl:,.2f}
+📍 <b>Entry:</b> {entry:.{decimals}f}
+🛑 <b>Stop Loss:</b> {sl:.{decimals}f}
 """
 
         for i, tp_level in enumerate(tp, 1):
-            message += f"🎯 <b>TP{i}:</b> {tp_level:,.2f}\n"
+            message += f"🎯 <b>TP{i}:</b> {tp_level:.{decimals}f}\n"
 
         message += f"""
 📐 <b>Risk/Reward:</b> {rr:.2f}

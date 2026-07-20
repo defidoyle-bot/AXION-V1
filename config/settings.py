@@ -330,7 +330,7 @@ class SignalConfig(BaseModel):
     institutional_grade_threshold: int = Field(default=80, ge=20, le=100)
     premium_threshold: int = Field(default=65, ge=20, le=95)
     strong_threshold: int = Field(default=50, ge=20, le=90)
-    standard_threshold: int = Field(default=50, ge=20, le=80)
+    standard_threshold: int = Field(default=49, ge=20, le=80)
     watchlist_threshold: int = Field(default=35, ge=19, le=70)
 
     # Adaptive thresholds

@@ -596,18 +596,21 @@ class ApprovalHandler(EventHandler):
             )
             return None
 
-        # Duplicate prevention
-        dedup_key = f"{payload.symbol}_{payload.direction}"
+        # Duplicate prevention: per-symbol (not direction) so opposite
+        # signals on the same symbol get suppressed within the cooldown
+        dedup_key = payload.symbol
         now = datetime.now(timezone.utc)
         if dedup_key in self._recent_signals:
-            elapsed = (now - self._recent_signals[dedup_key]).total_seconds()
+            existing = self._recent_signals[dedup_key]
+            elapsed = (now - existing["time"]).total_seconds()
             if elapsed < self._cooldown_seconds:
                 logger.info(
                     f"Duplicate suppressed: {payload.symbol} {payload.direction} "
-                    f"({elapsed:.0f}s ago, cooldown={self._cooldown_seconds}s)"
+                    f"({elapsed:.0f}s ago, last was {existing['direction']}, "
+                    f"cooldown={self._cooldown_seconds}s)"
                 )
                 return None
-        self._recent_signals[dedup_key] = now
+        self._recent_signals[dedup_key] = {"time": now, "direction": payload.direction}
 
         signal_id = str(uuid.uuid4())[:8]
         risk = payload.risk_assessment
