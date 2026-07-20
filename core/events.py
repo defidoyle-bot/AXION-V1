@@ -207,6 +207,23 @@ class SignalStored:
     timestamp: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class HybridMLRefined:
+    """Emitted when the hybrid ML pipeline refines a signal."""
+    signal_id: str
+    symbol: str
+    direction: str
+    original_position_size: float
+    adjusted_position_size: float
+    multiplier: float
+    rl_action: int
+    rl_action_label: str
+    booster_probability: float
+    booster_confidence: float
+    should_skip: bool
+    timestamp: datetime
+
+
 # =============================================================================
 # EVENT HANDLER INTERFACE
 # =============================================================================

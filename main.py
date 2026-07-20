@@ -24,7 +24,8 @@ from core.events import (
     PipelineOrchestrator,
     MarketDataReceived, DataValidated, IndicatorsCalculated,
     SMCAnalysisCompleted, MLPredictionCompleted, RiskValidationCompleted,
-    SignalScored, SignalApproved, TelegramNotificationSent, SignalStored,
+    SignalScored, SignalApproved, HybridMLRefined,
+    TelegramNotificationSent, SignalStored,
 )
 from core.logging import setup_logging, get_logger, EventLogger
 from exchange.mexc_client import MEXCClient, MEXCCandle
@@ -44,6 +45,7 @@ from backtesting.engine import BacktestEngine
 from backtesting.paper_trading import PaperTradingEngine
 from scanner.symbol_scanner import SymbolScanner as DedicatedSymbolScanner
 from strategy.profile_manager import ProfileManager
+from hybrid_ml.pipeline import HybridMLPipeline, HybridMLRefinement
 
 logger = get_logger("main")
 
@@ -663,8 +665,102 @@ class ApprovalHandler(EventHandler):
         )
 
 
+class HybridMLRefinementRegistry:
+    """Shared in-memory store for hybrid ML refinements keyed by signal_id."""
+    _refinements: Dict[str, HybridMLRefinement] = {}
+
+    @classmethod
+    def store(cls, signal_id: str, refinement: HybridMLRefinement) -> None:
+        cls._refinements[signal_id] = refinement
+
+    @classmethod
+    def get(cls, signal_id: str) -> Optional[HybridMLRefinement]:
+        return cls._refinements.get(signal_id)
+
+
+class HybridMLHandler(EventHandler):
+    """Handles SignalApproved events — runs hybrid ML pipeline to refine position sizing.
+
+    Stores the refinement result in HybridMLRefinementRegistry so TelegramHandler
+    can pick up the adjusted position size without duplicating the event.
+    """
+
+    def __init__(
+        self,
+        pipeline: HybridMLPipeline,
+        paper_engine: Optional[PaperTradingEngine] = None,
+    ):
+        self.hybrid_ml = pipeline
+        self.paper_engine = paper_engine
+
+    @property
+    def subscribed_events(self) -> List[type]:
+        return [SignalApproved]
+
+    async def handle(self, event: Event[Any]) -> Optional[Event]:
+        payload = event.payload
+        if not get_config().hybrid_ml.enabled:
+            return None  # pass through — TelegramHandler gets the original
+
+        signal_dict = {
+            "signal_id": payload.signal_id,
+            "symbol": payload.symbol,
+            "direction": payload.direction,
+            "entry_price": payload.entry_price,
+            "stop_loss": payload.stop_loss,
+            "take_profit": payload.take_profit,
+            "position_size": payload.position_size,
+            "leverage": payload.leverage,
+            "score": payload.score,
+            "classification": payload.classification,
+            "risk_reward": payload.risk_reward,
+            "market_regime": payload.market_regime,
+        }
+
+        # Build account context for RL state
+        account_info = None
+        if self.paper_engine:
+            acct = self.paper_engine.get_account()
+            account_info = {
+                "balance": acct.balance,
+                "initial_balance": 10000.0,
+                "active_trades": len(self.paper_engine._active_trades) if hasattr(self.paper_engine, '_active_trades') else 0,
+                "max_concurrent_trades": get_config().risk.max_concurrent_trades,
+                "daily_pnl": acct.total_pnl,
+                "win_rate": (acct.winning_trades / acct.total_trades) if acct.total_trades > 0 else 0.5,
+                "avg_win": 0.0,
+                "avg_loss": 0.0,
+                "avg_volume": 0.0,
+            }
+
+        # Run hybrid ML pipeline
+        try:
+            refinement = self.hybrid_ml.refine(signal_dict, account_info)
+        except Exception as exc:
+            logger.error(f"HybridMLHandler: refinement failed for {payload.symbol}: {exc}")
+            return None  # pass through unchanged
+
+        if refinement.should_skip:
+            logger.info(f"HybridMLHandler: SKIPPED {payload.symbol} {payload.direction} (RL veto)")
+            return None  # signal dropped — TelegramHandler won't fire
+
+        # Store refinement so TelegramHandler can read it
+        HybridMLRefinementRegistry.store(payload.signal_id, refinement)
+
+        logger.info(
+            f"HybridMLHandler: refined {payload.symbol} {payload.direction} "
+            f"size={refinement.original_position_size:.4f}→{refinement.adjusted_position_size:.4f} "
+            f"action={refinement.rl_action_label} booster={refinement.booster_probability:.2%}"
+        )
+        return None  # do NOT re-emit — TelegramHandler gets the original event with registry lookup
+
+
 class TelegramHandler(EventHandler):
-    """Handles SignalApproved events - sends notifications."""
+    """Handles SignalApproved events - sends notifications.
+
+    Checks HybridMLRefinementRegistry for any RL refinement to the signal;
+    if found, uses the adjusted position size and updated ML values.
+    """
 
     def __init__(self, bot: TelegramBot):
         self.bot = bot
@@ -676,6 +772,13 @@ class TelegramHandler(EventHandler):
     async def handle(self, event: Event[Any]) -> Optional[Event]:
         payload = event.payload
 
+        # Check for hybrid ML refinement
+        refinement = HybridMLRefinementRegistry.get(payload.signal_id)
+        position_size = refinement.adjusted_position_size if refinement else payload.position_size
+        ml_prob = refinement.booster_probability if refinement else payload.ml_probability
+        ml_conf = refinement.booster_confidence if refinement else payload.ml_confidence
+        risk_status = "Refined" if refinement else payload.risk_status
+
         signal_dict = {
             "signal_id": payload.signal_id,
             "symbol": payload.symbol,
@@ -683,15 +786,16 @@ class TelegramHandler(EventHandler):
             "entry_price": payload.entry_price,
             "stop_loss": payload.stop_loss,
             "take_profit": payload.take_profit,
+            "position_size": position_size,
             "score": payload.score,
             "classification": payload.classification,
             "risk_reward": payload.risk_reward,
             "leverage": payload.leverage,
-            "ml_probability": payload.ml_probability,
-            "ml_confidence": payload.ml_confidence,
+            "ml_probability": ml_prob,
+            "ml_confidence": ml_conf,
             "market_regime": payload.market_regime,
             "smc_summary": payload.smc_summary,
-            "risk_status": payload.risk_status,
+            "risk_status": risk_status,
         }
 
         await self.bot.send_signal(signal_dict)
@@ -811,6 +915,9 @@ class AxionQuant:
         # Initialize backtesting
         self.backtest_engine = BacktestEngine()
 
+        # Initialize hybrid ML pipeline
+        self.hybrid_ml_pipeline = HybridMLPipeline()
+
         # Register pipeline handlers
         self._register_handlers()
 
@@ -825,6 +932,10 @@ class AxionQuant:
         self.pipeline.register_stage("MLPredictionCompleted", RiskHandler())
         self.pipeline.register_stage("RiskValidationCompleted", SignalHandler())
         self.pipeline.register_stage("SignalScored", ApprovalHandler())
+        self.pipeline.register_stage(
+            "SignalApproved",
+            HybridMLHandler(self.hybrid_ml_pipeline, self.paper_engine),
+        )
         self.pipeline.register_stage("SignalApproved", TelegramHandler(self.telegram_bot))
         self.pipeline.register_stage("TelegramNotificationSent", StorageHandler(self.db_manager))
 
@@ -839,12 +950,20 @@ class AxionQuant:
         await self.telegram_bot.start()
 
         logger.info("AXION QUANT V4 is running")
+        self._last_hybrid_retrain = datetime.now(timezone.utc)
 
         # Main loop
         while self._running:
             try:
                 # Scan symbols and process
                 await self._scan_cycle()
+
+                # Periodic hybrid ML retraining (every 60 min)
+                if get_config().hybrid_ml.enabled:
+                    elapsed = (datetime.now(timezone.utc) - self._last_hybrid_retrain).total_seconds() / 60
+                    if elapsed >= get_config().hybrid_ml.booster_retrain_interval_minutes:
+                        await self._retrain_hybrid_ml()
+                        self._last_hybrid_retrain = datetime.now(timezone.utc)
 
                 # Wait for next cycle or shutdown
                 try:
@@ -876,6 +995,56 @@ class AxionQuant:
 
         except Exception as e:
             logger.error(f"Scan cycle error: {e}")
+
+    async def _retrain_hybrid_ml(self) -> None:
+        """Retrain the hybrid ML pipeline on completed trades."""
+        completed_trades: List[Dict[str, Any]] = []
+
+        # Collect closed trades from the paper engine
+        if self.paper_engine and hasattr(self.paper_engine, '_trade_history'):
+            for trade in self.paper_engine._trade_history:
+                completed_trades.append({
+                    "signal_id": trade.signal_id,
+                    "symbol": trade.symbol,
+                    "direction": trade.direction,
+                    "entry_price": trade.entry_price,
+                    "stop_loss": trade.stop_loss,
+                    "take_profit": list(trade.take_profit) if trade.take_profit else [],
+                    "position_size": trade.position_size,
+                    "leverage": trade.leverage,
+                    "margin": trade.margin,
+                    "pnl": trade.pnl,
+                    "pnl_percent": trade.pnl_percent,
+                    "status": trade.status.value if hasattr(trade.status, 'value') else str(trade.status),
+                    "market_regime": getattr(trade, 'market_regime', 'unknown'),
+                    "risk_reward": getattr(trade, 'risk_reward', 0.0),
+                    "score": getattr(trade, 'score', 0),
+                    "atr_percent": getattr(trade, 'atr_percent', 0),
+                    "rsi": getattr(trade, 'rsi', 50),
+                    "spread": getattr(trade, 'spread', 0),
+                    "volume_24h": getattr(trade, 'volume_24h', 0),
+                })
+
+        if not completed_trades:
+            logger.debug("HybridML: no completed trades to train on")
+            return
+
+        # Retrain booster + RL agent
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: self.hybrid_ml_pipeline.retrain_from_trades(completed_trades),
+        )
+        booster_perf = result.get("booster")
+        rl_count = result.get("rl", 0)
+
+        if booster_perf:
+            logger.info(
+                f"HybridML retrained: booster ROC-AUC={booster_perf.roc_auc:.4f} "
+                f"({booster_perf.total_trades} trades), RL={rl_count} experiences"
+            )
+        elif rl_count > 0:
+            logger.info(f"HybridML retrained: RL={rl_count} experiences (booster skipped)")
 
     async def shutdown(self) -> None:
         """Graceful shutdown."""

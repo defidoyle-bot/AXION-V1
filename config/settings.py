@@ -308,6 +308,24 @@ class MLConfig(BaseModel):
 
 
 # =============================================================================
+# HYBRID ML PIPELINE CONFIGURATION
+# =============================================================================
+
+class HybridMLConfig(BaseModel):
+    """Hybrid ML pipeline (gradient booster + RL agent) configuration."""
+
+    enabled: bool = Field(default=True)
+    booster_retrain_min_trades: int = Field(default=20, ge=5, le=500)
+    booster_retrain_interval_minutes: int = Field(default=60, ge=10, le=1440)
+    rl_training_batch_size: int = Field(default=32, ge=8, le=256)
+    rl_memory_capacity: int = Field(default=10000, ge=100, le=100000)
+    deterministic_inference: bool = Field(
+        default=True,
+        description="Deterministic = always takes best action; False = exploration"
+    )
+
+
+# =============================================================================
 # SIGNAL ENGINE CONFIGURATION
 # =============================================================================
 
@@ -630,6 +648,7 @@ class AppConfig(BaseSettings):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     backtest: BacktestConfig = Field(default_factory=BacktestConfig)
     paper_trading: PaperTradingConfig = Field(default_factory=PaperTradingConfig)
+    hybrid_ml: HybridMLConfig = Field(default_factory=HybridMLConfig)
 
     @model_validator(mode="before")
     @classmethod
