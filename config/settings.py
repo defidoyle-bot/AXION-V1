@@ -330,8 +330,8 @@ class SignalConfig(BaseModel):
     institutional_grade_threshold: int = Field(default=80, ge=20, le=100)
     premium_threshold: int = Field(default=65, ge=20, le=95)
     strong_threshold: int = Field(default=50, ge=20, le=90)
-    standard_threshold: int = Field(default=20, ge=20, le=80)
-    watchlist_threshold: int = Field(default=19, ge=19, le=70)
+    standard_threshold: int = Field(default=50, ge=20, le=80)
+    watchlist_threshold: int = Field(default=35, ge=19, le=70)
 
     # Adaptive thresholds
     adaptive_scoring_enabled: bool = Field(default=True)
@@ -650,12 +650,13 @@ class AppConfig(BaseSettings):
                 "priority": [e.strip().lower() for e in priority_str.split(",") if e.strip()],
             }
         # Telegram credentials
-        if "telegram" not in values or values["telegram"] is None:
-            values["telegram"] = {
-                "bot_token": os.environ.get("TELEGRAM_BOT_TOKEN", ""),
-                "admin_chat_id": os.environ.get("TELEGRAM_ADMIN_CHAT_ID", ""),
-                "channel_id": os.environ.get("TELEGRAM_CHANNEL_ID", None),
-            }
+        telegram = values.get("telegram") or {}
+        telegram["bot_token"] = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        if "admin_chat_id" not in telegram:
+            telegram["admin_chat_id"] = os.environ.get("TELEGRAM_ADMIN_CHAT_ID", "")
+        if "channel_id" not in telegram:
+            telegram["channel_id"] = os.environ.get("TELEGRAM_CHANNEL_ID", None)
+        values["telegram"] = telegram
         # paper_trading must be a dict/object not a bool
         if "paper_trading" in values and isinstance(values["paper_trading"], bool):
             values["paper_trading"] = PaperTradingConfig(enabled=values["paper_trading"])
@@ -703,6 +704,9 @@ class ConfigLoader:
             return cls._instance
 
         env_path = Path(env_file) if env_file else Path(".env")
+        if env_path.exists():
+            from dotenv import load_dotenv
+            load_dotenv(env_path)
 
         # .env is optional when env vars are injected directly (e.g. GitHub Actions secrets)
         try:

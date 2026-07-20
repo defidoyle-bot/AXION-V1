@@ -382,6 +382,16 @@ class RiskManagementEngine:
                 # Recalculate risk
                 risk_amount = price_risk * position_size
 
+        # Cap notional at max_exposure_per_symbol_percent so the
+        # exposure check later doesn't reject every trade (especially
+        # for low-priced assets where risk/stop produces huge units)
+        max_notional = self._account_balance * (self.config.max_exposure_per_symbol_percent / 100)
+        if notional_value > max_notional:
+            notional_value = max_notional
+            position_size = notional_value / entry_price
+            margin_required = notional_value / leverage
+            risk_amount = price_risk * position_size
+
         # Check if margin exceeds account
         if margin_required > self._account_balance * 0.5:
             position_size = (self._account_balance * 0.5 * leverage) / entry_price

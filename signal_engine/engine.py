@@ -284,7 +284,10 @@ class SignalScoringEngine:
         ))
 
         # Final score
-        total_score = min(100, max(0, round(base_total + quality_weighted)))
+        raw = base_total + quality_weighted
+        if raw != raw:  # NaN guard
+            raw = 50.0
+        total_score = min(100, max(0, round(raw)))
 
         # Classification
         classification = self._classify_score(total_score)
@@ -515,6 +518,12 @@ class SignalScoringEngine:
 
         probability = ml.get("probability_of_success", 0.5)
         confidence = ml.get("confidence", 0.0)
+
+        # Guard against NaN from failed probability calibration
+        if probability is None or (isinstance(probability, float) and (probability != probability)):
+            probability = 0.5
+        if confidence is None or (isinstance(confidence, float) and (confidence != confidence)):
+            confidence = 0.0
 
         # Convert probability to score based on direction
         if direction == "LONG":
