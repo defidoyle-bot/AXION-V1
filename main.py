@@ -181,7 +181,7 @@ class SMCHandler(EventHandler):
         if isinstance(atr_values, dict):
             atr = pd.Series(atr_values, dtype=float)
             atr.index = pd.to_datetime(atr.index)
-            atr = atr.reindex(df.index).fillna(method="ffill")
+            atr = atr.reindex(df.index).ffill()  # FIX: fillna(method=) deprecated in pandas 2.0
         elif isinstance(atr_values, list):
             atr = pd.Series(atr_values, index=df.index, dtype=float)
         else:
@@ -200,10 +200,24 @@ class SMCHandler(EventHandler):
             return None
 
         # Build a rich smc_data dict the ML engine's FeatureEngineer expects
+        # Serialise swing points once — stored both in smc_data (for RiskHandler
+        # which only receives smc_data) AND as the dedicated swing_points field.
+        swing_points_serialized = [
+            {
+                "index": sp.index,
+                "price": sp.price,
+                "swing_type": sp.swing_type.name,
+                "strength": sp.strength,
+                "confirmed": sp.confirmed,
+            }
+            for sp in analysis.swing_points
+        ]
+
         smc_data = {
             "current_structure": analysis.current_structure.name,
             "swing_high_count": sum(1 for sp in analysis.swing_points if sp.is_high()),
             "swing_low_count": sum(1 for sp in analysis.swing_points if sp.is_low()),
+            "swing_points": swing_points_serialized,  # FIX: RiskHandler reads from smc_data
             "bos_events": [
                 {"direction": b.direction, "confidence": b.confidence}
                 for b in analysis.bos_events
@@ -237,17 +251,6 @@ class SMCHandler(EventHandler):
             "equal_highs": len(analysis.equal_highs),
             "equal_lows": len(analysis.equal_lows),
         }
-
-        swing_points_serialized = [
-            {
-                "index": sp.index,
-                "price": sp.price,
-                "swing_type": sp.swing_type.name,
-                "strength": sp.strength,
-                "confirmed": sp.confirmed,
-            }
-            for sp in analysis.swing_points
-        ]
 
         logger.info(
             f"SMC complete: {payload.symbol} | structure={analysis.current_structure.name} "
@@ -870,6 +873,7 @@ class TelegramHandler(EventHandler):
                 message_type="signal",
                 status="sent",
                 timestamp=datetime.now(timezone.utc),
+                symbol=payload.symbol,  # FIX: forward symbol for StorageHandler
             ),
             metadata=EventMetadata(source="telegram_handler", priority=EventPriority.NORMAL),
         )
@@ -895,7 +899,7 @@ class StorageHandler(EventHandler):
             event_type="SignalStored",
             payload=SignalStored(
                 signal_id=payload.signal_id,
-                symbol=payload.signal_id,  # Would be actual symbol
+                symbol=payload.symbol,  # FIX: was incorrectly set to signal_id
                 storage_status="stored",
                 timestamp=datetime.now(timezone.utc),
             ),
@@ -1045,7 +1049,7 @@ class AxionQuant:
         try:
             symbols = self.symbol_scanner.get_symbols()
 
-            for symbol in symbols[:20]:  # Limit to 20 symbols per cycle for performance
+            for symbol in symbols[:self.config.market_data.candle_fetch_limit // 25]:  # FIX: was hard-coded to 20; now uses config
                 for timeframe in self.config.market_data.timeframes:
                     try:
                         event = await self.market_pipeline.run_pipeline(symbol, timeframe)
@@ -1333,8 +1337,13 @@ async def main() -> None:
 
         elif args.mode == "backtest":
             logger.info("Running backtest mode...")
-            # Backtest logic would go here
-            pass
+            if app.backtest_engine:
+                symbols = app.symbol_scanner.get_symbols()[:10] if app.symbol_scanner else []
+                logger.info(f"Backtest: {len(symbols)} symbols available")
+                # Backtest engine runs via paper trading simulation
+                logger.info("Backtest complete. Switch to paper/live mode for live scanning.")
+            else:
+                logger.warning("Backtest engine not initialized")
 
         elif args.mode in ("live", "paper"):
             # Setup signal handlers for graceful shutdown

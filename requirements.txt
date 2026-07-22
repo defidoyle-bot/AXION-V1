@@ -2,7 +2,6 @@
 # Python 3.12+
 
 # Core Async & HTTP
-asyncio>=3.4.3
 aiohttp>=3.9.0
 aiofiles>=23.2.0
 
@@ -29,6 +28,7 @@ optuna>=3.4.0
 joblib>=1.3.0
 
 # Technical Analysis
+# NOTE: ta-lib requires system library: sudo apt-get install -y libta-lib-dev
 ta-lib>=0.4.28
 pandas-ta>=0.3.14b
 
@@ -64,10 +64,6 @@ black>=23.11.0
 isort>=5.12.0
 mypy>=1.7.0
 
-# Documentation
-mkdocs>=1.5.0
-mkdocs-material>=9.4.0
-
 # Utilities
 python-dateutil>=2.8.2
 pytz>=2023.3
@@ -76,9 +72,3 @@ uvloop>=0.19.0; sys_platform != "win32"
 
 # Security
 cryptography>=41.0.0
-aiofiles
-aiohttp
-pydantic
-pydantic-settings
-python-dotenv
-structlog

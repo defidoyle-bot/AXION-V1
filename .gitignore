@@ -1,0 +1,63 @@
+# === CRITICAL: Never commit secrets ===
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.Python
+pip-wheel-metadata/
+
+# Virtual environments
+venv/
+env/
+.venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+logs/*.log
+logs/*.txt
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+data/axion.db
+
+# ML Models (large binary files — committed selectively)
+# models/*.pkl  # uncomment to exclude all models
+
+# Test artifacts
+.coverage
+.pytest_cache/
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Distribution
+*.tar.gz
+*.zip
+
+# Replit
+.replit
+replit.md
+.cache/
+
+# Misc
+*.bak
+*.tmp

@@ -199,6 +199,7 @@ class TelegramNotificationSent:
     message_type: str
     status: str
     timestamp: datetime
+    symbol: str = ""  # FIX: added so StorageHandler can reference the symbol
 
 @dataclass(frozen=True, slots=True)
 class SignalStored:
