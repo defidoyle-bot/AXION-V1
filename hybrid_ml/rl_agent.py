@@ -108,11 +108,16 @@ class ReplayBuffer:
         return len(self.buffer)
 
 
-class DQN(nn.Module):
+_DQNBase = nn.Module if _HAS_TORCH else object
+
+
+class DQN(_DQNBase):
     """Deep Q-Network."""
 
     def __init__(self, state_dim: int, action_dim: int, hidden_dim: int = 128):
         super().__init__()
+        if not _HAS_TORCH:
+            return
         self.net = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
             nn.ReLU(),
@@ -123,7 +128,9 @@ class DQN(nn.Module):
             nn.Linear(hidden_dim, action_dim),
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x):
+        if not _HAS_TORCH:
+            return x
         return self.net(x)
 
 

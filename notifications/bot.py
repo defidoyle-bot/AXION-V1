@@ -116,11 +116,14 @@ class TelegramBot:
         self._send_task = asyncio.create_task(self._process_message_queue())
 
         # Start polling
-        await self.application.initialize()
-        await self.application.start()
-        await self.application.updater.start_polling(drop_pending_updates=True)
-
-        logger.info("Telegram bot started")
+        try:
+            await self.application.initialize()
+            await self.application.start()
+            await self.application.updater.start_polling(drop_pending_updates=True)
+            logger.info("Telegram bot started")
+        except Exception as e:
+            logger.warning(f"Telegram bot start failed ({e}); running in mock mode. Signals will be logged, not sent.")
+            self.application = None
 
     async def stop(self) -> None:
         """Stop the bot gracefully."""
@@ -134,10 +137,13 @@ class TelegramBot:
                 pass
 
         if self.application:
-            if self.application.updater:
-                await self.application.updater.stop()
-            await self.application.stop()
-            await self.application.shutdown()
+            try:
+                if self.application.updater and getattr(self.application.updater, "running", False):
+                    await self.application.updater.stop()
+                await self.application.stop()
+                await self.application.shutdown()
+            except Exception as e:
+                logger.warning(f"Telegram bot stop error (ignored): {e}")
 
         logger.info("Telegram bot stopped")
 
@@ -150,21 +156,31 @@ class TelegramBot:
         # Remove classification filtering (let ApprovalHandler decide)
         message = self._format_signal_message(signal)
 
+        symbol = signal.get("symbol", "")
+        classification = signal.get("classification", "")
+        direction = signal.get("direction", "")
+
+        logger.info(
+            f"Signal notification queued: {symbol} {direction} | "
+            f"{classification} (score={signal.get('score', 0)}) | "
+            f"Telegram {'MOCK' if not self.application else 'LIVE'} mode"
+        )
+
         # Send to channel if configured
         if self.config.channel_id:
             await self._queue_message(
                 self.config.channel_id,
                 message,
-                signal.get("symbol", ""),
-                signal.get("classification", ""),
+                symbol,
+                classification,
             )
 
         # Send to admin
         await self._queue_message(
             self.config.admin_chat_id,
             message,
-            signal.get("symbol", ""),
-            signal.get("classification", ""),
+            symbol,
+            classification,
         )
 
     def _format_signal_message(self, signal: Dict[str, Any]) -> str:
@@ -755,6 +771,11 @@ class TelegramBot:
                     )
                     messages_sent += 1
                     logger.debug(f"Sent {msg['type']} message to {msg['chat_id']}")
+                else:
+                    logger.info(
+                        f"[TELEGRAM MOCK] {msg['type']} for {msg['symbol']} to {msg['chat_id']}: "
+                        f"{msg['text'][:80].replace(chr(10), ' ')}..."
+                    )
 
             except asyncio.TimeoutError:
                 continue
