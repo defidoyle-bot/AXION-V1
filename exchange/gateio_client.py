@@ -112,15 +112,21 @@ class GateioClient(BaseExchangeClient):
     # ------------------------------------------------------------------
 
     async def get_contracts(self) -> List[UnifiedContractInfo]:
-        """GET /api/v4/futures/usdt/contracts — list all USDT perpetuals."""
+        """GET /api/v4/futures/usdt/contracts — list crypto USDT perpetuals only."""
         try:
             data = await self._request("/contracts")
             contracts: List[UnifiedContractInfo] = []
+            # Gate.io also lists stocks, forex, metals, commodities, indices as USDT futures.
+            # These are not crypto futures and are excluded here.
+            non_crypto_categories = {"stocks", "forex", "metals", "commodities", "indices"}
             for item in data:
                 name = item.get("name", "")
                 # Gate.io USDT linear contracts have type "direct" (not "swap")
                 # We already query /futures/usdt/ endpoint so all results are USDT-settled
                 if not name or "_" not in name:
+                    continue
+                category = (item.get("contract_type") or "").lower()
+                if category in non_crypto_categories:
                     continue
                 # Gate.io uses name like BTC_USDT directly
                 status = "TRADING" if not item.get("in_delisting") else "DELISTED"
@@ -135,6 +141,7 @@ class GateioClient(BaseExchangeClient):
                         max_leverage=int(item.get("leverage_max", 100) or 100),
                         status=status,
                         margin_asset="USDT",
+                        contract_category="crypto" if not category else category,
                     )
                 )
             logger.info(f"Gate.io: discovered {len(contracts)} USDT perpetuals")

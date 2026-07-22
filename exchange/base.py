@@ -47,6 +47,7 @@ class UnifiedContractInfo:
     max_leverage: int
     status: str
     margin_asset: str
+    contract_category: str = ""  # e.g. "crypto", "stocks", "forex", "metals", "commodities", "indices"
 
 
 @dataclass(frozen=True, slots=True)

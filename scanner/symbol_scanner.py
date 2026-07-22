@@ -43,19 +43,21 @@ class SymbolInfo:
     lot_size: float
     min_qty: float
     max_leverage: int
+    contract_category: str = ""  # e.g. "crypto", "stocks", "forex"
     discovered_at: datetime = field(default_factory=datetime.utcnow)
     last_seen_at: datetime = field(default_factory=datetime.utcnow)
 
     def is_active(self) -> bool:
-        """Return True only for actively-trading USDT perpetual contracts."""
+        """Return True only for actively-trading crypto USDT perpetual contracts."""
         # Status on MEXC can be ENABLED, ONLINE, TRADING, 1
         active_statuses = {"TRADING", "ENABLED", "ONLINE", "1", "TRUE"}
         # Some contracts might have empty status but be tradeable
         status_ok = self.status.upper() in active_statuses or not self.status
         # Ensure it's USDT-M
         quote_ok = self.quote_asset.upper() == "USDT"
-        # MEXC /detail endpoint returns futures
-        return status_ok and quote_ok
+        # Exclude non-crypto Gate.io categories (stocks, forex, metals, commodities, indices)
+        category_ok = not self.contract_category or self.contract_category.lower() == "crypto"
+        return status_ok and quote_ok and category_ok
 
 
 @dataclass
@@ -216,6 +218,7 @@ class SymbolScanner:
                         lot_size=c.min_order_size,
                         min_qty=c.min_order_size,
                         max_leverage=int(c.max_leverage),
+                        contract_category=getattr(c, "contract_category", ""),
                     )
                     for c in contracts
                 ]
@@ -255,9 +258,30 @@ class SymbolScanner:
     async def _apply_market_filters(
         self, symbols: List[SymbolInfo], stats: ScannerStats
     ) -> List[SymbolInfo]:
-        # Market filters (volume, OI, spread) intentionally disabled — all
-        # active USDT perpetual symbols pass through. Config defaults
-        # (min_24h_volume_usdt=0, min_open_interest_usdt=0) already mean
-        # no symbols are blocked. Skip expensive per-symbol ticker fetches
-        # (800+ API calls/cycle with zero filtering benefit).
-        return list(symbols)
+        """Apply configurable minimum 24h quote volume filter.
+
+        All other market filters (open interest, spread, liquidity score) remain
+        disabled. The threshold is controlled by market_data.min_24h_volume_usdt
+        (env var MIN_24H_QUOTE_VOLUME, default 10_000_000 USDT).
+        """
+        min_volume = self._config.min_24h_volume_usdt
+        if min_volume <= 0:
+            return list(symbols)
+
+        try:
+            tickers = await self._client.get_ticker()
+            volume_map = {t.symbol: t.volume_24h for t in tickers}
+        except Exception as exc:
+            logger.warning(f"Scanner: failed to fetch tickers for volume filter: {exc}")
+            return list(symbols)
+
+        filtered: List[SymbolInfo] = []
+        for info in symbols:
+            quote_volume = volume_map.get(info.symbol, 0.0)
+            if quote_volume >= min_volume:
+                filtered.append(info)
+            else:
+                stats.rejected_low_volume += 1
+                logger.debug(f"Scanner: filtered {info.symbol} (24h quote volume {quote_volume:,.0f} < {min_volume:,.0f})")
+
+        return filtered

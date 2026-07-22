@@ -114,17 +114,17 @@ class MEXCTicker:
         return cls(
             symbol=data.get("symbol", ""),
             last_price=float(data.get("lastPrice", 0)),
-            mark_price=float(data.get("markPrice", 0)),
+            mark_price=float(data.get("fairPrice", data.get("markPrice", 0))),
             index_price=float(data.get("indexPrice", 0)),
-            bid_price=float(data.get("bidPrice", 0)),
-            ask_price=float(data.get("askPrice", 0)),
-            volume_24h=float(data.get("volume24h", 0)),
-            open_interest=float(data.get("openInterest", 0)),
+            bid_price=float(data.get("bid1", data.get("bidPrice", 0))),
+            ask_price=float(data.get("ask1", data.get("askPrice", 0))),
+            volume_24h=float(data.get("volume24", data.get("volume24h", 0))),
+            open_interest=float(data.get("holdVol", data.get("openInterest", 0))),
             funding_rate=float(data.get("fundingRate", 0)),
-            high_24h=float(data.get("high24h", 0)),
-            low_24h=float(data.get("low24h", 0)),
-            price_change_24h=float(data.get("priceChange", 0)),
-            price_change_percent_24h=float(data.get("priceChangePercent", 0)),
+            high_24h=float(data.get("high24Price", data.get("high24h", 0))),
+            low_24h=float(data.get("lower24Price", data.get("low24h", 0))),
+            price_change_24h=float(data.get("riseFallValue", data.get("priceChange", 0))),
+            price_change_percent_24h=float(data.get("riseFallRate", data.get("priceChangePercent", 0))),
         )
 
 
@@ -340,28 +340,37 @@ class MEXCClient(BaseExchangeClient):
     # =============================================================================
 
     async def get_contracts(self) -> List[UnifiedContractInfo]:
-        """Get all active USDT-M perpetual futures contracts."""
+        """Get all active crypto USDT-M perpetual futures contracts."""
         data = await self._request("GET", "/detail")
         contracts: List[UnifiedContractInfo] = []
+        # MEXC lists stock, commodity and other non-crypto perpetuals under the same endpoint.
+        non_crypto_symbols = {
+            "XAU_USDT", "SILVER_USDT", "USOIL_USDT", "XAG_USDT", "OIL_USDT", "GOLD_USDT",
+            "NSDQ_USDT", "SPX_USDT", "DJI_USDT",
+        }
         for item in data:
             raw = MEXCContractInfo.from_api_response(item)
             if len(contracts) < 3:
                 logger.debug(f"Contract debug: symbol={raw.symbol}, margin={raw.margin_asset}, status={raw.status}")
-            if raw.margin_asset.upper() == "USDT":
-                contracts.append(
-                    UnifiedContractInfo(
-                        symbol=raw.symbol,
-                        base_asset=raw.base_asset,
-                        quote_asset=raw.quote_asset,
-                        contract_size=raw.contract_size,
-                        tick_size=raw.tick_size,
-                        min_order_size=raw.min_order_size,
-                        max_leverage=raw.max_leverage,
-                        status=raw.status,
-                        margin_asset=raw.margin_asset,
-                    )
+            if raw.margin_asset.upper() != "USDT":
+                continue
+            if "STOCK" in raw.symbol or raw.symbol in non_crypto_symbols:
+                continue
+            contracts.append(
+                UnifiedContractInfo(
+                    symbol=raw.symbol,
+                    base_asset=raw.base_asset,
+                    quote_asset=raw.quote_asset,
+                    contract_size=raw.contract_size,
+                    tick_size=raw.tick_size,
+                    min_order_size=raw.min_order_size,
+                    max_leverage=raw.max_leverage,
+                    status=raw.status,
+                    margin_asset=raw.margin_asset,
+                    contract_category="crypto",
                 )
-        logger.info(f"Discovered {len(contracts)} USDT-M perpetual contracts")
+            )
+        logger.info(f"Discovered {len(contracts)} crypto USDT-M perpetual contracts")
         return contracts
 
     async def get_klines(
@@ -372,27 +381,46 @@ class MEXCClient(BaseExchangeClient):
         end_time: Optional[int] = None,
         limit: int = 500,
     ) -> List[UnifiedCandle]:
-        """Get OHLCV candlestick data from MEXC Futures API."""
-        params = {"symbol": symbol, "interval": interval, "limit": limit}
+        """Get OHLCV candlestick data from MEXC Futures API.
+
+        MEXC v1 contract kline uses a path parameter:
+            GET /api/v1/contract/kline/{symbol}?interval=Min60&limit=...
+        Response shape: { "time": [...], "open": [...], "close": [...], ... }
+        """
+        params: Dict[str, Any] = {"interval": interval, "limit": limit}
         if start_time: params["startTime"] = start_time
         if end_time: params["endTime"] = end_time
 
         try:
-            data = await self._request("GET", "/kline", params, version_override="/api/v1")
+            data = await self._request("GET", f"/kline/{symbol}", params)
+            # _request unwraps the outer {"success", "code", "data"} wrapper, so data is either
+            # the series object {"time": [...], ...} or already a list/empty.
+            series = data if isinstance(data, dict) and "time" in data else {}
+            if not series or not series.get("time"):
+                return []
+
+            times = series.get("time", [])
+            opens = series.get("open", [])
+            highs = series.get("high", [])
+            lows = series.get("low", [])
+            closes = series.get("close", [])
+            vols = series.get("vol", [])
+            amounts = series.get("amount", [])
+            trades = series.get("count", [])
+
             candles: List[UnifiedCandle] = []
-            for item in data:
-                raw = MEXCCandle.from_api_response(symbol, item)
+            for i in range(len(times)):
                 candles.append(
                     UnifiedCandle(
-                        symbol=raw.symbol,
-                        timestamp=raw.timestamp,
-                        open=raw.open,
-                        high=raw.high,
-                        low=raw.low,
-                        close=raw.close,
-                        volume=raw.volume,
-                        quote_volume=raw.quote_volume,
-                        trades=raw.trades,
+                        symbol=symbol,
+                        timestamp=int(times[i]) * 1000,  # seconds -> ms
+                        open=float(opens[i]),
+                        high=float(highs[i]),
+                        low=float(lows[i]),
+                        close=float(closes[i]),
+                        volume=float(vols[i]),
+                        quote_volume=float(amounts[i]) if i < len(amounts) else 0.0,
+                        trades=int(trades[i]) if i < len(trades) else 0,
                     )
                 )
             return candles

@@ -129,7 +129,7 @@ class MarketDataConfig(BaseModel):
     higher_timeframe: Timeframe = Field(default=Timeframe.H4, description="Higher timeframe for trend context")
     lower_timeframe: Timeframe = Field(default=Timeframe.M15, description="Lower timeframe for entry precision")
 
-    min_24h_volume_usdt: float = Field(default=0, ge=0, description="Minimum 24h volume in USDT")
+    min_24h_volume_usdt: float = Field(default=10000000, ge=0, description="Minimum 24h quote volume in USDT")
     min_open_interest_usdt: float = Field(default=0, ge=0, description="Minimum open interest in USDT")
     max_spread_percent: float = Field(default=0.5, ge=0, le=10, description="Maximum spread percentage")
     min_liquidity_score: float = Field(default=0.3, ge=0, le=1, description="Minimum liquidity score")
@@ -668,6 +668,10 @@ class AppConfig(BaseSettings):
             values["multi_exchange"] = {
                 "priority": [e.strip().lower() for e in priority_str.split(",") if e.strip()],
             }
+        # Market data filters
+        market_data = values.setdefault("market_data", {})
+        if "min_24h_volume_usdt" not in market_data:
+            market_data["min_24h_volume_usdt"] = float(os.environ.get("MIN_24H_QUOTE_VOLUME", 10000000))
         # Telegram credentials
         telegram = values.get("telegram") or {}
         telegram["bot_token"] = os.environ.get("TELEGRAM_BOT_TOKEN", "")
