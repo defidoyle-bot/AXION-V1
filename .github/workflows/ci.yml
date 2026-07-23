@@ -8,6 +8,9 @@ on:
 jobs:
   market-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
     steps:
       - uses: actions/checkout@v4
 
@@ -16,13 +19,52 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      # CRITICAL FIX: ta-lib requires system C library
+      - name: Install TA-Lib system dependency
+        run: sudo apt-get update && sudo apt-get install -y libta-lib-dev
+
+      - name: Install Python dependencies
         run: pip install -r requirements.txt
 
+      - name: Create required directories
+        run: mkdir -p logs models data
+
       - name: Run market scan
-        run: timeout 600 python main.py --mode paper || true
+        run: timeout 3300 python main.py --mode paper
         env:
           EXCHANGE_PRIORITY: "gate,bitget,okx,mexc"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          MEXC_ACCESS_KEY: ${{ secrets.MEXC_ACCESS_KEY }}
+          MEXC_SECRET_KEY: ${{ secrets.MEXC_SECRET_KEY }}
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
+          DATABASE_URL: "sqlite+aiosqlite:///data/axion.db"
+          ENVIRONMENT: "production"
+          LOG_LEVEL: "INFO"
+
+      # Commit updated model/data files back to repo
+      - name: Commit updated models and data
+        if: always()
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          git add models/ data/ logs/ || true
+          git diff --cached --quiet || git commit -m "chore: update models and data [skip ci]"
+          git push || true
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-logs-${{ github.run_id }}
+          path: logs/
+          retention-days: 7
