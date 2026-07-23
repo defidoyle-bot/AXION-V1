@@ -289,10 +289,13 @@ class MLHandler(EventHandler):
     def __init__(self):
         self.engine = MLEngine()
         self._model_ready: bool = False
+        self._loaded_direction: str = "LONG"
         # Attempt to restore a previously saved model immediately
-        self._model_ready = self.engine.load_latest_model()
-        if self._model_ready:
-            logger.info("MLHandler: loaded saved model from disk")
+        loaded_direction = self.engine.load_latest_model(direction=self._loaded_direction)
+        if loaded_direction is not None:
+            self._model_ready = True
+            self._loaded_direction = loaded_direction
+            logger.info(f"MLHandler: loaded saved model from disk ({loaded_direction})")
         else:
             logger.info("MLHandler: no saved model found — will train on first prediction")
 
@@ -506,6 +509,7 @@ class RiskHandler(EventHandler):
                 ml_prediction={
                     "probability_of_success": payload.probability,
                     "confidence": payload.confidence,
+                    "direction": payload.direction,
                 },
                 smc_data=payload.smc_data,
                 indicators=payload.indicators,

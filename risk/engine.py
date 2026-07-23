@@ -187,6 +187,7 @@ class RiskManagementEngine:
         order_blocks: Optional[List[Dict]] = None,
         contract_info: Optional[Dict] = None,
         strategy_profile: StrategyProfile = StrategyProfile.INTRADAY,
+        leverage: Optional[int] = None,
     ) -> RiskAssessment:
         """Validate a potential trade and calculate risk parameters."""
 
@@ -223,8 +224,8 @@ class RiskManagementEngine:
         if weekly_loss >= weekly_limit:
             return self._reject(f"Weekly loss limit reached: ${weekly_loss:.2f}")
 
-        # 6. Calculate leverage
-        leverage = self._get_leverage(strategy_profile)
+        # 6. Calculate leverage (allow caller override for stress testing)
+        leverage = leverage if leverage is not None else self._get_leverage(strategy_profile)
 
         # 7. Calculate stop loss if not provided
         if stop_loss is None:

@@ -420,6 +420,8 @@ class SignalScoringEngine:
 
         # BOS confirmation
         bos_events = smc.get("bos_events", [])
+        if isinstance(bos_events, int):
+            bos_events = []
         if bos_events:
             latest_bos = bos_events[-1]
             if latest_bos.get("direction") == "bullish" and direction == "LONG":
@@ -443,6 +445,8 @@ class SignalScoringEngine:
 
         # FVG alignment
         fvgs = smc.get("fvgs", [])
+        if isinstance(fvgs, int):
+            fvgs = []
         if fvgs:
             open_fvgs = [f for f in fvgs if f.get("status") == "OPEN"]
             if open_fvgs:
@@ -450,6 +454,8 @@ class SignalScoringEngine:
 
         # Liquidity sweep
         sweeps = smc.get("liquidity_sweeps", [])
+        if isinstance(sweeps, int):
+            sweeps = []
         if sweeps:
             latest_sweep = sweeps[-1]
             if latest_sweep.get("sweep_type") == "sell_side" and direction == "LONG":
@@ -527,11 +533,17 @@ class SignalScoringEngine:
         if confidence is None or (isinstance(confidence, float) and (confidence != confidence)):
             confidence = 0.0
 
-        # Convert probability to score based on direction
-        if direction == "LONG":
+        # Direction-aware ML scoring
+        ml_direction = ml.get("direction", None)
+        if ml_direction == direction:
+            # Model was trained for this direction — probability is already success chance
             base_score = probability * 100
         else:
-            base_score = (1 - probability) * 100
+            # Legacy / no direction tag — probability = chance of upward move
+            if direction == "LONG":
+                base_score = probability * 100
+            else:
+                base_score = (1 - probability) * 100
 
         # Weight by confidence
         return base_score * (0.5 + confidence * 0.5)
@@ -724,10 +736,12 @@ class SignalScoringEngine:
 
     def _smc_details(self, smc: Dict[str, Any]) -> str:
         details = [f"Structure: {smc.get('current_structure', 'unknown')}"]
-        if smc.get("bos_events"):
-            details.append(f"BOS: {len(smc['bos_events'])}")
-        if smc.get("order_blocks"):
-            details.append(f"OBs: {len(smc['order_blocks'])}")
+        bos_events = smc.get("bos_events", [])
+        if isinstance(bos_events, list) and bos_events:
+            details.append(f"BOS: {len(bos_events)}")
+        order_blocks = smc.get("order_blocks", [])
+        if isinstance(order_blocks, list) and order_blocks:
+            details.append(f"OBs: {len(order_blocks)}")
         return ", ".join(details)
 
     def _liquidity_details(self, liquidity: Dict[str, Any]) -> str:

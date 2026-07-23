@@ -533,6 +533,7 @@ class MLEngine:
                 prediction_explanation="Insufficient data for prediction",
                 prediction_timestamp=datetime.now(timezone.utc),
                 market_regime="unknown",
+                direction=direction,
             )
 
         # Use latest data point
@@ -568,6 +569,7 @@ class MLEngine:
             prediction_explanation=explanation,
             prediction_timestamp=datetime.now(timezone.utc),
             market_regime=market_regime,
+            direction=direction,
         )
 
     def _get_feature_importance(self) -> Dict[str, float]:
@@ -670,18 +672,39 @@ class MLEngine:
             old_file.unlink()
             logger.debug(f"Removed old model: {old_file}")
 
-    def load_latest_model(self) -> bool:
-        """Load the most recent saved model."""
+    def load_latest_model(
+        self, direction: Optional[str] = None, fallback: bool = True
+    ) -> Optional[str]:
+        """Load the most recent saved model.
+
+        Args:
+            direction: Prefer a model trained for this direction (LONG/SHORT).
+            fallback: If True (default), use newest model when no direction-specific
+                model exists. Keeps ML active before directional models are trained.
+
+        Returns:
+            Direction the loaded model was trained for, or None if nothing loaded.
+        """
         model_files = sorted(self._model_path.glob("model_*.pkl"), key=lambda x: x.stat().st_mtime, reverse=True)
 
         if not model_files:
-            logger.warning("No saved models found")
-            return False
+            logger.warning("No saved models found — will train on first prediction")
+            return None
 
-        latest = model_files[0]
+        selected = model_files[0]
+        requested_direction = None
+        if direction:
+            requested_direction = direction.upper()
+            direction_specific = [f for f in model_files if f"_{requested_direction}_" in f.name]
+            if direction_specific:
+                selected = direction_specific[0]
+            elif fallback:
+                logger.warning(f"No {requested_direction} model found, using latest as fallback")
+            else:
+                return None
 
         try:
-            with open(latest, "rb") as f:
+            with open(selected, "rb") as f:
                 model_data = pickle.load(f)
 
             self.model = model_data["model"]
@@ -689,13 +712,14 @@ class MLEngine:
             self.scaler = model_data.get("scaler")
             self.feature_names = model_data.get("feature_names", [])
             self.model_version = model_data.get("model_version", "unknown")
+            loaded_direction = model_data.get("direction", "LONG")
 
-            logger.info(f"Loaded model from {latest}")
-            return True
+            logger.info(f"Loaded model from {selected} (direction={loaded_direction})")
+            return loaded_direction
 
         except Exception as e:
             logger.error(f"Failed to load model: {e}")
-            return False
+            return None
 
     def should_retrain(self) -> bool:
         """Check if model performance has degraded and retraining is needed."""

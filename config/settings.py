@@ -668,18 +668,20 @@ class AppConfig(BaseSettings):
             values["multi_exchange"] = {
                 "priority": [e.strip().lower() for e in priority_str.split(",") if e.strip()],
             }
-        # Market data filters
-        market_data = values.setdefault("market_data", {})
-        if "min_24h_volume_usdt" not in market_data:
+        # Market data filters — only touch raw dicts, not already-instantiated models
+        market_data = values.get("market_data", {})
+        if isinstance(market_data, dict) and "min_24h_volume_usdt" not in market_data:
             market_data["min_24h_volume_usdt"] = float(os.environ.get("MIN_24H_QUOTE_VOLUME", 10000000))
-        # Telegram credentials
+            values["market_data"] = market_data
+        # Telegram credentials — only touch raw dicts
         telegram = values.get("telegram") or {}
-        telegram["bot_token"] = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-        if "admin_chat_id" not in telegram:
-            telegram["admin_chat_id"] = os.environ.get("TELEGRAM_ADMIN_CHAT_ID", "")
-        if "channel_id" not in telegram:
-            telegram["channel_id"] = os.environ.get("TELEGRAM_CHANNEL_ID", None)
-        values["telegram"] = telegram
+        if isinstance(telegram, dict):
+            telegram["bot_token"] = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+            if "admin_chat_id" not in telegram:
+                telegram["admin_chat_id"] = os.environ.get("TELEGRAM_ADMIN_CHAT_ID", "")
+            if "channel_id" not in telegram:
+                telegram["channel_id"] = os.environ.get("TELEGRAM_CHANNEL_ID", None)
+            values["telegram"] = telegram
         # paper_trading must be a dict/object not a bool
         if "paper_trading" in values and isinstance(values["paper_trading"], bool):
             values["paper_trading"] = PaperTradingConfig(enabled=values["paper_trading"])
