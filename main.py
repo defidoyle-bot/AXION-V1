@@ -599,10 +599,50 @@ class SignalHandler(EventHandler):
 class ApprovalHandler(EventHandler):
     """Handles SignalScored events — approves signals with real prices and duplicate prevention."""
 
+    # Cooldown file persists between GitHub Actions runs (in-memory resets every hour)
+    _COOLDOWN_FILE = "data/signal_cooldowns.json"
+    _COOLDOWN_SECONDS = 4 * 3600  # 4 hour cooldown per symbol
+
     def __init__(self):
-        # Duplicate prevention: cooldown per symbol+direction
-        self._recent_signals: dict = {}
-        self._cooldown_seconds = 3600  # 1 hour per symbol/direction
+        self._recent_signals: dict = self._load_cooldowns()
+
+    def _load_cooldowns(self) -> dict:
+        """Load persisted cooldowns from disk so they survive between GitHub Actions runs."""
+        import json, os
+        if not os.path.exists(self._COOLDOWN_FILE):
+            return {}
+        try:
+            with open(self._COOLDOWN_FILE) as f:
+                raw = json.load(f)
+            # Convert ISO strings back to datetime
+            result = {}
+            now = datetime.now(timezone.utc)
+            for symbol, info in raw.items():
+                dt = datetime.fromisoformat(info["time"])
+                # Only keep if still within cooldown window
+                if (now - dt).total_seconds() < self._COOLDOWN_SECONDS:
+                    result[symbol] = {"time": dt, "direction": info["direction"]}
+            return result
+        except Exception as e:
+            logger.warning(f"ApprovalHandler: could not load cooldowns: {e}")
+            return {}
+
+    def _save_cooldowns(self) -> None:
+        """Persist cooldowns to disk so next GitHub Actions run respects them."""
+        import json, os
+        os.makedirs("data", exist_ok=True)
+        try:
+            serialized = {
+                symbol: {
+                    "time": info["time"].isoformat(),
+                    "direction": info["direction"],
+                }
+                for symbol, info in self._recent_signals.items()
+            }
+            with open(self._COOLDOWN_FILE, "w") as f:
+                json.dump(serialized, f, indent=2)
+        except Exception as e:
+            logger.warning(f"ApprovalHandler: could not save cooldowns: {e}")
 
     @property
     def subscribed_events(self) -> List[type]:
@@ -620,21 +660,24 @@ class ApprovalHandler(EventHandler):
             )
             return None
 
-        # Duplicate prevention: per-symbol (not direction) so opposite
-        # signals on the same symbol get suppressed within the cooldown
+        # Duplicate prevention: per-symbol so LONG and SHORT on same coin
+        # are both blocked within the cooldown window — persists across runs
         dedup_key = payload.symbol
         now = datetime.now(timezone.utc)
         if dedup_key in self._recent_signals:
             existing = self._recent_signals[dedup_key]
             elapsed = (now - existing["time"]).total_seconds()
-            if elapsed < self._cooldown_seconds:
+            if elapsed < self._COOLDOWN_SECONDS:
                 logger.info(
                     f"Duplicate suppressed: {payload.symbol} {payload.direction} "
-                    f"({elapsed:.0f}s ago, last was {existing['direction']}, "
-                    f"cooldown={self._cooldown_seconds}s)"
+                    f"({elapsed/3600:.1f}h ago, last was {existing['direction']}, "
+                    f"cooldown={self._COOLDOWN_SECONDS/3600:.0f}h)"
                 )
                 return None
+
+        # Record this signal and persist to disk immediately
         self._recent_signals[dedup_key] = {"time": now, "direction": payload.direction}
+        self._save_cooldowns()
 
         signal_id = str(uuid.uuid4())[:8]
         risk = payload.risk_assessment
