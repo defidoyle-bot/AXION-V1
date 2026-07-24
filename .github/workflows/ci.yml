@@ -27,7 +27,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      # CRITICAL FIX: ta-lib requires system C library
       - name: Install TA-Lib system dependency
         run: sudo apt-get update && sudo apt-get install -y libta-lib-dev
 
@@ -51,7 +50,6 @@ jobs:
           ENVIRONMENT: "production"
           LOG_LEVEL: "INFO"
 
-      # Commit updated model/data files back to repo
       - name: Commit updated models and data
         if: always()
         run: |
