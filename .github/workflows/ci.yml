@@ -27,19 +27,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-   - name: Install TA-Lib system dependency
-        run: |
-          wget -q https://github.com/ta-lib/ta-lib/releases/download/v0.6.4/ta-lib_0.6.4_amd64.deb
-          sudo dpkg -i ta-lib_0.6.4_amd64.deb
-          rm ta-lib_0.6.4_amd64.deb
-
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
       - name: Create required directories
         run: mkdir -p logs models data
 
-   - name: Run market scan
+      - name: Run market scan
         run: timeout 3300 python main.py --mode paper
         env:
           EXCHANGE_PRIORITY: "gate,bitget,okx,mexc"
@@ -62,7 +56,7 @@ jobs:
           git diff --cached --quiet || git commit -m "chore: update models and data [skip ci]"
           git push || true
 
-      - name: Upload logs on failure
+ - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
