@@ -27,8 +27,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: Install TA-Lib system dependency
-        run: sudo apt-get update && sudo apt-get install -y libta-lib-dev
+   - name: Install TA-Lib system dependency
+        run: |
+          wget -q https://github.com/ta-lib/ta-lib/releases/download/v0.6.4/ta-lib_0.6.4_amd64.deb
+          sudo dpkg -i ta-lib_0.6.4_amd64.deb
+          rm ta-lib_0.6.4_amd64.deb
 
       - name: Install Python dependencies
         run: pip install -r requirements.txt
