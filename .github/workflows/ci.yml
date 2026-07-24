@@ -39,7 +39,7 @@ jobs:
       - name: Create required directories
         run: mkdir -p logs models data
 
-      - name: Run market scan
+   - name: Run market scan
         run: timeout 3300 python main.py --mode paper
         env:
           EXCHANGE_PRIORITY: "gate,bitget,okx,mexc"
