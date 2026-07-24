@@ -68,6 +68,11 @@ class TelegramBot:
         self._message_queue: asyncio.Queue = asyncio.Queue(maxsize=self.config.message_queue_max_size)
         self._running = False
         self._send_task: Optional[asyncio.Task] = None
+        self._data_provider: Optional[Any] = None
+
+    def set_data_provider(self, provider: Any) -> None:
+        """Wire a data provider (e.g. PaperTradingEngine) for command handlers."""
+        self._data_provider = provider
 
     async def initialize(self) -> None:
         """Initialize the Telegram bot."""

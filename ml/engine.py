@@ -47,6 +47,7 @@ class MLPrediction:
     prediction_explanation: str
     prediction_timestamp: datetime
     market_regime: str
+    direction: str = "NEUTRAL"  # LONG / SHORT / NEUTRAL
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -533,7 +534,7 @@ class MLEngine:
                 prediction_explanation="Insufficient data for prediction",
                 prediction_timestamp=datetime.now(timezone.utc),
                 market_regime="unknown",
-                direction=direction,
+                direction="NEUTRAL",
             )
 
         # Use latest data point
@@ -557,6 +558,8 @@ class MLEngine:
 
         # Explanation
         explanation = self._generate_explanation(proba, feature_importance, market_regime)
+
+        direction = "LONG" if proba >= 0.5 else "SHORT"
 
         return MLPrediction(
             symbol=symbol,
@@ -624,6 +627,11 @@ class MLEngine:
         else:
             proba = self.model.predict_proba(X)[:, 1]
             pred = self.model.predict(X)
+
+        # Guard against NaN probabilities produced by the calibrated model
+        # (can occur when a calibration fold receives a class-pure split).
+        import numpy as np
+        proba = np.nan_to_num(proba, nan=0.5)
 
         return ModelPerformance(
             accuracy=accuracy_score(target, pred),

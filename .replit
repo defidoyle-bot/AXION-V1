@@ -2,7 +2,7 @@ modules = ["python-3.12"]
 
 [nix]
 channel = "stable-25_05"
-packages = ["cairo", "cargo", "ffmpeg-full", "freetype", "ghostscript", "glibcLocales", "gobject-introspection", "gtk3", "libiconv", "libxcrypt", "ocl-icd", "opencl-headers", "openssl", "pkg-config", "qhull", "rustc", "tcl", "tk", "xsimd"]
+packages = ["cairo", "cargo", "ffmpeg-full", "freetype", "ghostscript", "glibcLocales", "gobject-introspection", "gtk3", "lcms2", "libiconv", "libimagequant", "libjpeg", "libtiff", "libuv", "libwebp", "libxcrypt", "libyaml", "ocl-icd", "opencl-headers", "openjpeg", "openssl", "pkg-config", "qhull", "rustc", "tcl", "tk", "xsimd", "zlib"]
 
 [agent]
 expertMode = true
@@ -11,3 +11,39 @@ expertMode = true
 
 [userenv.shared]
 EXCHANGE_PRIORITY = "gate,bitget,okx,bybit,mexc"
+ENVIRONMENT = "production"
+LOG_LEVEL = "INFO"
+MEXC_TESTNET = "false"
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "AXION QUANT — Live"
+
+[[workflows.workflow]]
+name = "AXION QUANT — Live"
+mode = "sequential"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "AXION QUANT — Live"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
+name = "AXION QUANT-LIVE"
+mode = "sequential"
+author = 62690750
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "AXION QUANT — Live"

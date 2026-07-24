@@ -55,8 +55,17 @@ class SecretMaskingFilter(logging.Filter):
     def _mask_secrets(self, text: str) -> str:
         """Replace sensitive patterns with [REDACTED]."""
         for pattern in SENSITIVE_PATTERNS:
-            text = pattern.sub(r'\1=[REDACTED]', text)
+            text = pattern.sub(self._redact_match, text)
         return text
+
+    def _redact_match(self, match: re.Match) -> str:
+        """Redact a secret match, keeping key labels when present."""
+        groups = match.groups()
+        if len(groups) >= 2 and groups[0]:
+            # Pattern has key/value groups (e.g. api_key=secret); keep the key label
+            return f"{groups[0]}=[REDACTED]"
+        # Single-group pattern (e.g. Telegram token); redact the entire match
+        return "[REDACTED]"
 
 
 # =============================================================================
@@ -214,6 +223,11 @@ def setup_logging(
         wrapper_class=structlog.stdlib.BoundLogger,
         cache_logger_on_first_use=True,
     )
+
+    # Suppress third-party loggers that may leak secrets (URLs, tokens, etc.)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("telegram").setLevel(logging.WARNING)
+    logging.getLogger("telegram.ext").setLevel(logging.WARNING)
 
     logger = logging.getLogger("axion_quant")
     logger.info(

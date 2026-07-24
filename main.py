@@ -294,6 +294,7 @@ class MLHandler(EventHandler):
         self.engine = MLEngine()
         self._model_ready: bool = False
         self._loaded_direction: str = "LONG"
+        self._last_trained_at: Optional[datetime] = None
         # Attempt to restore a previously saved model immediately
         loaded_direction = self.engine.load_latest_model(direction=self._loaded_direction)
         if loaded_direction is not None:
@@ -379,6 +380,7 @@ class MLHandler(EventHandler):
                 model_version=prediction.model_version,
                 feature_importance=prediction.feature_importance,
                 prediction_explanation=prediction.prediction_explanation,
+                direction=prediction.direction,
                 # Forward candle data for downstream handlers (RiskHandler needs these)
                 candles=payload.candles,
                 indicators=payload.indicators,
@@ -389,7 +391,11 @@ class MLHandler(EventHandler):
 
     @staticmethod
     def _neutral_prediction(payload: SMCAnalysisCompleted) -> Event:
-        """Return a calibrated neutral prediction when ML cannot run."""
+        """Return a calibrated neutral prediction when ML cannot run.
+
+        Forwards candles, indicators, and smc_data so downstream handlers
+        (RiskHandler, SignalHandler) are not starved of market data.
+        """
         return Event(
             event_type="MLPredictionCompleted",
             payload=MLPredictionCompleted(
@@ -400,6 +406,9 @@ class MLHandler(EventHandler):
                 model_version="unavailable",
                 feature_importance={},
                 prediction_explanation="ML unavailable — neutral prior applied (0% confidence weight)",
+                candles=payload.candles,
+                indicators=payload.indicators,
+                smc_data=payload.smc_data,
             ),
             metadata=EventMetadata(source="ml_handler", priority=EventPriority.NORMAL),
         )

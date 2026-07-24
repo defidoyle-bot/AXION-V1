@@ -130,6 +130,7 @@ class MLPredictionCompleted:
     model_version: str
     feature_importance: Dict[str, float]
     prediction_explanation: str
+    direction: str = "NEUTRAL"  # LONG / SHORT / NEUTRAL — derived from ML probability
     candles: List[Dict[str, Any]] = field(default_factory=list)
     indicators: Dict[str, Any] = field(default_factory=dict)
     smc_data: Dict[str, Any] = field(default_factory=dict)
