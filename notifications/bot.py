@@ -115,14 +115,17 @@ class TelegramBot:
         # Start message queue processor
         self._send_task = asyncio.create_task(self._process_message_queue())
 
-        # Start polling
+        # FIX: Send-only mode — no polling for GitHub Actions
+        # Polling blocks the event loop and wastes resources in automated scan mode.
+        # Commands (/status, /stats etc.) are handled when the bot is polled manually.
         try:
             await self.application.initialize()
             await self.application.start()
-            await self.application.updater.start_polling(drop_pending_updates=True)
-            logger.info("Telegram bot started")
+            # NOTE: Polling intentionally NOT started here.
+            # To enable command handling, run: python main.py --mode bot
+            logger.info("Telegram bot started in send-only mode")
         except Exception as e:
-            logger.warning(f"Telegram bot start failed ({e}); running in mock mode. Signals will be logged, not sent.")
+            logger.warning(f"Telegram bot start failed ({e}); running in mock mode.")
             self.application = None
 
     async def stop(self) -> None:
@@ -822,13 +825,23 @@ class TelegramBot:
         await update.message.reply_text(help_text, parse_mode="HTML")
 
     async def _cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /status command."""
-        # This would be populated by the main application
-        status = "\n🟢 <b>System Status:</b> Running\n"
-        status += "📊 Scanner: Active\n"
-        status += "🧠 ML Engine: Active\n"
-        status += "📡 Telegram: Connected\n"
-        status += "💾 Database: Connected\n"
+        """Handle /status command — shows real paper trading account state."""
+        if self._data_provider:
+            try:
+                acct = self._data_provider.get_account_summary()
+                status = (
+                    f"\n🟢 <b>AXION System Status</b>\n\n"
+                    f"💰 Balance: <b>${acct.get('balance', 0):.2f}</b>\n"
+                    f"📈 Equity: <b>${acct.get('equity', 0):.2f}</b>\n"
+                    f"📊 Open Trades: <b>{acct.get('open_trades', 0)}</b>\n"
+                    f"✅ Total Trades: <b>{acct.get('total_trades', 0)}</b>\n"
+                    f"🏆 Win Rate: <b>{acct.get('win_rate', 0):.1f}%</b>\n"
+                    f"💵 Total PnL: <b>${acct.get('total_pnl', 0):.2f}</b>\n"
+                )
+            except Exception:
+                status = "\n🟢 <b>System Status:</b> Running\n📊 Scanner: Active\n"
+        else:
+            status = "\n🟢 <b>System Status:</b> Running\n📊 Scanner: Active\n"
         await update.message.reply_text(status, parse_mode="HTML")
 
     async def _cmd_health(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -856,12 +869,27 @@ class TelegramBot:
         )
 
     async def _cmd_signals(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /signals command."""
-        await update.message.reply_text(
-            "📊 <b>Recent Signals</b>\n\n"
-            "No recent signals to display.",
-            parse_mode="HTML",
-        )
+        """Handle /signals command — shows recent signals from DB."""
+        if self._data_provider:
+            try:
+                signals = self._data_provider.get_recent_signals(limit=5)
+                if signals:
+                    lines = ["📊 <b>Recent Signals</b>\n"]
+                    for s in signals:
+                        emoji = "🟢" if s.get("direction") == "LONG" else "🔴"
+                        lines.append(
+                            f"{emoji} <b>{s['symbol']}</b> {s['direction']} | "
+                            f"Score: {s.get('score', 0)} | "
+                            f"{s.get('created_at', '')[:16]}"
+                        )
+                    msg = "\n".join(lines)
+                else:
+                    msg = "📊 <b>Recent Signals</b>\n\nNo signals yet."
+            except Exception as e:
+                msg = f"📊 <b>Recent Signals</b>\n\nError: {e}"
+        else:
+            msg = "📊 <b>Recent Signals</b>\n\nNo data available yet."
+        await update.message.reply_text(msg, parse_mode="HTML")
 
     async def _cmd_watchlist(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /watchlist command."""
@@ -872,15 +900,25 @@ class TelegramBot:
         )
 
     async def _cmd_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /stats command."""
-        await update.message.reply_text(
-            "📈 <b>Trading Statistics</b>\n\n"
-            "Total Trades: 0\n"
-            "Win Rate: 0%\n"
-            "Profit Factor: 0.00\n"
-            "Sharpe Ratio: 0.00",
-            parse_mode="HTML",
-        )
+        """Handle /stats command — shows real stats from paper trading."""
+        if self._data_provider:
+            try:
+                stats = self._data_provider.get_stats()
+                msg = (
+                    f"📈 <b>Trading Statistics</b>\n\n"
+                    f"Total Trades: <b>{stats.get('total_trades', 0)}</b>\n"
+                    f"Winning: <b>{stats.get('winning_trades', 0)}</b>\n"
+                    f"Losing: <b>{stats.get('losing_trades', 0)}</b>\n"
+                    f"Win Rate: <b>{stats.get('win_rate', 0):.1f}%</b>\n"
+                    f"Total PnL: <b>${stats.get('total_pnl', 0):.2f}</b>\n"
+                    f"Avg PnL: <b>${stats.get('avg_pnl', 0):.2f}</b>\n"
+                    f"Max Drawdown: <b>${stats.get('max_drawdown', 0):.2f}</b>\n"
+                )
+            except Exception as e:
+                msg = f"📈 <b>Trading Statistics</b>\n\nError loading stats: {e}"
+        else:
+            msg = "📈 <b>Trading Statistics</b>\n\nNo data available yet."
+        await update.message.reply_text(msg, parse_mode="HTML")
 
     async def _cmd_performance(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /performance command."""

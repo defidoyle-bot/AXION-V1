@@ -247,9 +247,13 @@ class SMCHandler(EventHandler):
                 }
                 if analysis.premium_discount else {}
             ),
-            "supply_demand_zones": len(analysis.supply_demand_zones),
-            "equal_highs": len(analysis.equal_highs),
-            "equal_lows": len(analysis.equal_lows),
+            "supply_demand_zones": [
+                {"zone_type": z.zone_type, "top": z.top, "bottom": z.bottom,
+                 "strength": z.strength, "freshness": z.freshness}
+                for z in analysis.supply_demand_zones
+            ],
+            "equal_highs": analysis.equal_highs[:20],  # FIX: was just len() — now actual list, capped at 20
+            "equal_lows":  analysis.equal_lows[:20],   # FIX: same
         }
 
         logger.info(
@@ -318,8 +322,19 @@ class MLHandler(EventHandler):
             logger.warning(f"MLHandler: insufficient candles ({len(df)}) for {payload.symbol}, skipping")
             return None
 
-        # Train or retrain if needed (runs in the thread pool to avoid blocking the event loop)
-        if not self._model_ready or self.engine.should_retrain():
+        # FIX: Only retrain once per hour — prevents model being overwritten 80x per cycle
+        now_utc = datetime.now(timezone.utc)
+        retrain_due = (
+            not self._model_ready
+            or (
+                self.engine.should_retrain()
+                and (
+                    self._last_trained_at is None
+                    or (now_utc - self._last_trained_at).total_seconds() > 3600
+                )
+            )
+        )
+        if retrain_due:
             try:
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(
@@ -327,10 +342,12 @@ class MLHandler(EventHandler):
                     lambda: self.engine.train(df, payload.indicators, payload.smc_data),
                 )
                 self._model_ready = True
+                self._last_trained_at = now_utc
                 logger.info(f"MLHandler: model training complete for {payload.symbol}")
             except Exception as exc:
                 logger.error(f"MLHandler: training failed: {exc}", exc_info=True)
-                return None  # Skip instead of returning neutral
+                # FIX: Use neutral prediction fallback instead of dropping signal
+                return self._neutral_prediction(payload)
 
         # Run prediction
         try:
@@ -344,7 +361,7 @@ class MLHandler(EventHandler):
             )
         except Exception as exc:
             logger.error(f"MLHandler: prediction failed for {payload.symbol}: {exc}", exc_info=True)
-            return None  # Skip instead of returning neutral
+            return self._neutral_prediction(payload)  # FIX: fallback instead of dropping
 
         logger.info(
             f"ML prediction: {payload.symbol} | prob={prediction.probability_of_success:.2%} "
@@ -679,6 +696,20 @@ class ApprovalHandler(EventHandler):
         self._recent_signals[dedup_key] = {"time": now, "direction": payload.direction}
         self._save_cooldowns()
 
+        # FIX: Calculate real position size based on risk management
+        # position_size was hardcoded 0.0 — now calculated from balance + risk %
+        try:
+            cfg = get_config()
+            paper_balance = getattr(cfg.paper_trading, "initial_balance", 10000.0)
+            risk_pct = getattr(cfg.risk, "risk_per_trade_percent", 1.0)
+            risk_amount = paper_balance * (risk_pct / 100)
+            entry_p = payload.risk_assessment.entry_price if payload.risk_assessment else 0
+            sl_p = payload.risk_assessment.stop_loss if payload.risk_assessment else 0
+            risk_per_unit = abs(entry_p - sl_p) if entry_p and sl_p else 0
+            calculated_position_size = (risk_amount / risk_per_unit) if risk_per_unit > 0 else 0.01
+        except Exception:
+            calculated_position_size = 0.01
+
         signal_id = str(uuid.uuid4())[:8]
         risk = payload.risk_assessment
         ml = payload.ml_prediction or {}
@@ -739,7 +770,7 @@ class ApprovalHandler(EventHandler):
                 entry_price=entry_price,
                 stop_loss=stop_loss,
                 take_profit=take_profit if take_profit else [0.0],
-                position_size=0.0,
+                position_size=calculated_position_size,  # FIX: was hardcoded 0.0
                 leverage=leverage,
                 score=payload.score,
                 classification=payload.classification,
@@ -777,6 +808,19 @@ class HybridMLRefinementRegistry:
     @classmethod
     def get(cls, signal_id: str) -> Optional[HybridMLRefinement]:
         return cls._refinements.get(signal_id)
+
+    @classmethod
+    def cleanup(cls, max_age_seconds: int = 3600) -> None:
+        """FIX: Prevent registry growing forever — purge entries older than max_age."""
+        now = datetime.now(timezone.utc)
+        stale = [
+            k for k, v in cls._refinements.items()
+            if (now - v.timestamp).total_seconds() > max_age_seconds
+        ]
+        for k in stale:
+            del cls._refinements[k]
+        if stale:
+            logger.debug(f"HybridMLRefinementRegistry: purged {len(stale)} stale entries")
 
 
 class HybridMLHandler(EventHandler):
@@ -874,8 +918,9 @@ class TelegramHandler(EventHandler):
     if found, uses the adjusted position size and updated ML values.
     """
 
-    def __init__(self, bot: TelegramBot):
+    def __init__(self, bot: TelegramBot, paper_engine: Optional[Any] = None):
         self.bot = bot
+        self.paper_engine = paper_engine  # FIX: accept paper engine for trade execution
 
     @property
     def subscribed_events(self) -> List[type]:
@@ -886,6 +931,12 @@ class TelegramHandler(EventHandler):
 
         # Check for hybrid ML refinement
         refinement = HybridMLRefinementRegistry.get(payload.signal_id)
+
+        # FIX: Respect HybridML veto — if skip is requested, don't send
+        if refinement and refinement.should_skip:
+            logger.info(f"TelegramHandler: {payload.symbol} {payload.direction} skipped by HybridML veto")
+            return None
+
         position_size = refinement.adjusted_position_size if refinement else payload.position_size
         ml_prob = refinement.booster_probability if refinement else payload.ml_probability
         ml_conf = refinement.booster_confidence if refinement else payload.ml_confidence
@@ -912,6 +963,15 @@ class TelegramHandler(EventHandler):
 
         await self.bot.send_signal(signal_dict)
 
+        # FIX: Execute paper trade after broadcasting signal
+        # Previously signals were sent but never tracked in paper trading
+        if self.paper_engine and self.paper_engine.is_enabled():
+            try:
+                self.paper_engine.execute_signal(signal_dict, payload.entry_price)
+                logger.info(f"TelegramHandler: paper trade opened for {payload.symbol} {payload.direction}")
+            except Exception as e:
+                logger.warning(f"TelegramHandler: paper trade execution failed: {e}")
+
         return Event(
             event_type="TelegramNotificationSent",
             payload=TelegramNotificationSent(
@@ -920,7 +980,7 @@ class TelegramHandler(EventHandler):
                 message_type="signal",
                 status="sent",
                 timestamp=datetime.now(timezone.utc),
-                symbol=payload.symbol,  # FIX: forward symbol for StorageHandler
+                symbol=payload.symbol,
             ),
             metadata=EventMetadata(source="telegram_handler", priority=EventPriority.NORMAL),
         )
@@ -938,16 +998,39 @@ class StorageHandler(EventHandler):
 
     async def handle(self, event: Event[Any]) -> Optional[Event]:
         payload = event.payload
+        status = "stored"
 
-        # Store signal in database
-        # In real implementation, would store full signal data
+        # FIX: Actually write to database — previously was a no-op comment
+        if self.db:
+            try:
+                await self.db.store_signal({
+                    "signal_id": payload.signal_id,
+                    "symbol": payload.symbol,
+                    "direction": getattr(payload, "direction", "UNKNOWN"),
+                    "entry_price": getattr(payload, "entry_price", 0.0),
+                    "stop_loss": getattr(payload, "stop_loss", 0.0),
+                    "take_profit": getattr(payload, "take_profit", []),
+                    "position_size": getattr(payload, "position_size", 0.0),
+                    "leverage": getattr(payload, "leverage", 1),
+                    "score": getattr(payload, "score", 0),
+                    "classification": getattr(payload, "classification", "Standard"),
+                    "risk_reward": getattr(payload, "risk_reward", 0.0),
+                    "ml_probability": getattr(payload, "ml_probability", 0.5),
+                    "ml_confidence": getattr(payload, "ml_confidence", 0.0),
+                    "timeframe": getattr(payload, "timeframe", "1h"),
+                    "market_regime": getattr(payload, "market_regime", "unknown"),
+                })
+                logger.info(f"StorageHandler: signal {payload.signal_id} written to DB")
+            except Exception as e:
+                logger.warning(f"StorageHandler: DB write failed for {payload.signal_id}: {e}")
+                status = "db_error"
 
         return Event(
             event_type="SignalStored",
             payload=SignalStored(
                 signal_id=payload.signal_id,
-                symbol=payload.symbol,  # FIX: was incorrectly set to signal_id
-                storage_status="stored",
+                symbol=payload.symbol,
+                storage_status=status,
                 timestamp=datetime.now(timezone.utc),
             ),
             metadata=EventMetadata(source="storage_handler", priority=EventPriority.LOW),
@@ -1025,6 +1108,11 @@ class AxionQuant:
         # Initialize paper trading
         self.paper_engine = PaperTradingEngine()
 
+        # FIX: Wire paper engine as data provider for Telegram command handlers
+        # This enables /status, /stats, /signals to return real data
+        if self.telegram_bot and self.paper_engine:
+            self.telegram_bot.set_data_provider(self.paper_engine)
+
         # Initialize backtesting
         self.backtest_engine = BacktestEngine()
 
@@ -1049,7 +1137,7 @@ class AxionQuant:
             "SignalApproved",
             HybridMLHandler(self.hybrid_ml_pipeline, self.paper_engine),
         )
-        self.pipeline.register_stage("SignalApproved", TelegramHandler(self.telegram_bot))
+        self.pipeline.register_stage("SignalApproved", TelegramHandler(self.telegram_bot, paper_engine=self.paper_engine))
         self.pipeline.register_stage("TelegramNotificationSent", StorageHandler(self.db_manager))
 
     async def run(self) -> None:
@@ -1094,20 +1182,70 @@ class AxionQuant:
     async def _scan_cycle(self) -> None:
         """Perform one scan cycle."""
         try:
+            # FIX: Purge stale HybridML registry entries at the start of each cycle
+            HybridMLRefinementRegistry.cleanup(max_age_seconds=3600)
+
             symbols = self.symbol_scanner.get_symbols()
 
-            for symbol in symbols[:self.config.market_data.candle_fetch_limit // 25]:  # FIX: was hard-coded to 20; now uses config
-                for timeframe in self.config.market_data.timeframes:
-                    try:
-                        event = await self.market_pipeline.run_pipeline(symbol, timeframe)
-                        if event:
-                            await self.event_bus.emit(event)
-                    except Exception as e:
-                        logger.error(f"Error processing {symbol} {timeframe.value}: {e}")
-                        continue
+            # FIX: Only use PRIMARY timeframe — prevents 4x signals per coin per cycle
+            primary_tf = self.config.market_data.timeframes[0]
+            scan_limit = self.config.market_data.candle_fetch_limit // 25
+
+            for symbol in symbols[:scan_limit]:
+                try:
+                    event = await self.market_pipeline.run_pipeline(symbol, primary_tf)
+                    if event:
+                        await self.event_bus.emit(event)
+
+                    # FIX: Update open paper trades for this symbol every cycle
+                    # Previously update_trades() was never called so open trades never closed
+                    if self.paper_engine and hasattr(self.paper_engine, "update_trades"):
+                        try:
+                            current_price = await self._get_current_price(symbol)
+                            if current_price:
+                                from datetime import datetime, timezone as tz
+                                closed = self.paper_engine.update_trades(
+                                    symbol, current_price, datetime.now(tz.utc)
+                                )
+                                if closed:
+                                    for t in closed:
+                                        pnl = getattr(t, "pnl", 0)
+                                        status = getattr(t, "status", "closed")
+                                        emoji = "✅" if pnl > 0 else "❌"
+                                        logger.info(
+                                            f"Paper trade closed: {symbol} {status} PnL=${pnl:.2f}"
+                                        )
+                                        # Notify via Telegram
+                                        if self.telegram_bot:
+                                            msg = (
+                                                f"{emoji} <b>Paper Trade Closed</b>\n"
+                                                f"Symbol: <code>{symbol}</code>\n"
+                                                f"Status: {status}\n"
+                                                f"PnL: <b>${pnl:.2f}</b>"
+                                            )
+                                            await self.telegram_bot.send_message(
+                                                self.config.telegram.admin_chat_id, msg
+                                            )
+                        except Exception as e:
+                            logger.debug(f"update_trades error for {symbol}: {e}")
+
+                except Exception as e:
+                    logger.error(f"Error processing {symbol}: {e}")
+                    continue
 
         except Exception as e:
             logger.error(f"Scan cycle error: {e}")
+
+    async def _get_current_price(self, symbol: str) -> Optional[float]:
+        """Get latest price for a symbol via exchange manager."""
+        try:
+            if self.exchange_manager:
+                ticker = await self.exchange_manager.get_ticker(symbol)
+                if ticker:
+                    return float(ticker.get("last", 0) or ticker.get("close", 0))
+        except Exception:
+            pass
+        return None
 
     async def _retrain_hybrid_ml(self) -> None:
         """Retrain the hybrid ML pipeline on completed trades."""

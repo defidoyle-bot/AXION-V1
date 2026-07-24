@@ -261,10 +261,13 @@ class SMCEngine:
 
         # 3. Detect BOS and CHOCH
         bos_events = self._detect_bos(df, swing_points, atr)
-        choch_events = self._detect_choch(df, swing_points, atr, current_structure)
+        choch_events = self._detect_choch(df, swing_points, current_structure, atr)  # FIX: args were swapped
 
         # 4. Detect Order Blocks
         order_blocks = self._detect_order_blocks(df, swing_points, atr)
+
+        # 4b. Update OB mitigation status based on subsequent price action
+        order_blocks = self._update_ob_mitigation(df, order_blocks)
 
         # 5. Detect Fair Value Gaps
         fvgs = self._detect_fvgs(df, atr)
@@ -416,53 +419,58 @@ class SMCEngine:
     # =================================================================
 
     def _detect_bos(self, df: pd.DataFrame, swing_points: List[SwingPoint], atr: pd.Series) -> List[BreakOfStructure]:
-        """Detect Break of Structure events."""
+        """Detect Break of Structure events.
+        
+        FIX: Now compares each swing against the MOST RECENT previous swing of the SAME type,
+        not just the immediately adjacent swing. This catches real BOS events where structure
+        is broken across multiple swings.
+        """
         if len(swing_points) < 2:
             return []
 
         bos_events = []
-        closes = df["close"]
         volumes = df["volume"]
 
-        for i in range(1, len(swing_points)):
-            current_swing = swing_points[i]
-            previous_swing = swing_points[i-1]
+        # Track last seen high and low separately
+        last_high: Optional[SwingPoint] = None
+        last_low: Optional[SwingPoint] = None
 
-            # Only check confirmed swings
-            if not current_swing.confirmed or not previous_swing.confirmed:
+        for current_swing in swing_points:
+            if not current_swing.confirmed:
+                if current_swing.is_high():
+                    last_high = current_swing
+                else:
+                    last_low = current_swing
                 continue
 
-            # Bullish BOS: current swing high breaks above previous swing high
-            if current_swing.is_high() and previous_swing.is_high():
-                break_distance = current_swing.price - previous_swing.price
-                break_atr = break_distance / atr.iloc[current_swing.index] if atr.iloc[current_swing.index] > 0 else 0
+            current_atr = atr.iloc[current_swing.index] if atr.iloc[current_swing.index] > 0 else 0.0001
+
+            # Bullish BOS: current confirmed high breaks above last confirmed high
+            if current_swing.is_high() and last_high is not None and last_high.confirmed:
+                break_distance = current_swing.price - last_high.price
+                break_atr = break_distance / current_atr
 
                 if break_atr >= self.config.bos_min_break_distance:
-                    # Check displacement
                     displacement = False
-                    if self.config.bos_require_displacement:
-                        # Look for strong candle after break
-                        if current_swing.index < len(df) - 1:
-                            next_candle = df.iloc[current_swing.index + 1]
-                            candle_body = abs(next_candle["close"] - next_candle["open"])
-                            candle_atr = candle_body / atr.iloc[current_swing.index + 1] if atr.iloc[current_swing.index + 1] > 0 else 0
-                            displacement = candle_atr >= self.config.bos_displacement_atr_multiple
+                    if self.config.bos_require_displacement and current_swing.index < len(df) - 1:
+                        next_candle = df.iloc[current_swing.index + 1]
+                        candle_body = abs(next_candle["close"] - next_candle["open"])
+                        next_atr = atr.iloc[current_swing.index + 1] if atr.iloc[current_swing.index + 1] > 0 else current_atr
+                        candle_atr = candle_body / next_atr
+                        displacement = candle_atr >= self.config.bos_displacement_atr_multiple
 
-                    # Volume confirmation
                     avg_volume = volumes.iloc[max(0, current_swing.index-20):current_swing.index].mean()
                     volume_confirmed = volumes.iloc[current_swing.index] > avg_volume * 1.2 if avg_volume > 0 else False
 
                     confidence = min(1.0, break_atr / self.config.bos_min_break_distance) * 0.5
-                    if displacement:
-                        confidence += 0.25
-                    if volume_confirmed:
-                        confidence += 0.25
+                    if displacement: confidence += 0.25
+                    if volume_confirmed: confidence += 0.25
 
                     bos_events.append(BreakOfStructure(
                         index=current_swing.index,
                         timestamp=current_swing.timestamp,
                         direction="bullish",
-                        broken_swing=previous_swing,
+                        broken_swing=last_high,
                         break_price=current_swing.price,
                         break_distance_atr=break_atr,
                         displacement_confirmed=displacement,
@@ -470,40 +478,44 @@ class SMCEngine:
                         confidence=confidence,
                     ))
 
-            # Bearish BOS: current swing low breaks below previous swing low
-            elif current_swing.is_low() and previous_swing.is_low():
-                break_distance = previous_swing.price - current_swing.price
-                break_atr = break_distance / atr.iloc[current_swing.index] if atr.iloc[current_swing.index] > 0 else 0
+            # Bearish BOS: current confirmed low breaks below last confirmed low
+            elif current_swing.is_low() and last_low is not None and last_low.confirmed:
+                break_distance = last_low.price - current_swing.price
+                break_atr = break_distance / current_atr
 
                 if break_atr >= self.config.bos_min_break_distance:
                     displacement = False
-                    if self.config.bos_require_displacement:
-                        if current_swing.index < len(df) - 1:
-                            next_candle = df.iloc[current_swing.index + 1]
-                            candle_body = abs(next_candle["close"] - next_candle["open"])
-                            candle_atr = candle_body / atr.iloc[current_swing.index + 1] if atr.iloc[current_swing.index + 1] > 0 else 0
-                            displacement = candle_atr >= self.config.bos_displacement_atr_multiple
+                    if self.config.bos_require_displacement and current_swing.index < len(df) - 1:
+                        next_candle = df.iloc[current_swing.index + 1]
+                        candle_body = abs(next_candle["close"] - next_candle["open"])
+                        next_atr = atr.iloc[current_swing.index + 1] if atr.iloc[current_swing.index + 1] > 0 else current_atr
+                        candle_atr = candle_body / next_atr
+                        displacement = candle_atr >= self.config.bos_displacement_atr_multiple
 
                     avg_volume = volumes.iloc[max(0, current_swing.index-20):current_swing.index].mean()
                     volume_confirmed = volumes.iloc[current_swing.index] > avg_volume * 1.2 if avg_volume > 0 else False
 
                     confidence = min(1.0, break_atr / self.config.bos_min_break_distance) * 0.5
-                    if displacement:
-                        confidence += 0.25
-                    if volume_confirmed:
-                        confidence += 0.25
+                    if displacement: confidence += 0.25
+                    if volume_confirmed: confidence += 0.25
 
                     bos_events.append(BreakOfStructure(
                         index=current_swing.index,
                         timestamp=current_swing.timestamp,
                         direction="bearish",
-                        broken_swing=previous_swing,
+                        broken_swing=last_low,
                         break_price=current_swing.price,
                         break_distance_atr=break_atr,
                         displacement_confirmed=displacement,
                         volume_confirmed=volume_confirmed,
                         confidence=confidence,
                     ))
+
+            # Update trackers after checking
+            if current_swing.is_high():
+                last_high = current_swing
+            else:
+                last_low = current_swing
 
         return bos_events
 
@@ -681,6 +693,68 @@ class SMCEngine:
                         ))
 
         return order_blocks
+
+    def _update_ob_mitigation(self, df: pd.DataFrame, order_blocks: List[OrderBlock]) -> List[OrderBlock]:
+        """Update OB mitigation status based on how price has interacted since creation.
+        
+        FIX: Previously OBs were always 'fresh' with touch_count=0 — now accurately
+        tracks whether the OB has been tested or consumed by price.
+        """
+        updated = []
+        for ob in order_blocks:
+            if ob.index >= len(df) - 1:
+                updated.append(ob)
+                continue
+
+            subsequent = df.iloc[ob.index + 1:]
+            touch_count = 0
+            mitigated = False
+            invalidated = False
+
+            for _, candle in subsequent.iterrows():
+                if ob.ob_type == OBType.BULLISH:
+                    if candle["low"] <= ob.top and candle["high"] >= ob.bottom:
+                        touch_count += 1
+                        if candle["close"] < ob.bottom:
+                            invalidated = True
+                            break
+                        elif candle["low"] <= ob.mid_price:
+                            mitigated = True
+                else:  # BEARISH
+                    if candle["high"] >= ob.bottom and candle["low"] <= ob.top:
+                        touch_count += 1
+                        if candle["close"] > ob.top:
+                            invalidated = True
+                            break
+                        elif candle["high"] >= ob.mid_price:
+                            mitigated = True
+
+            if invalidated:
+                status = "invalidated"
+                validity = False
+            elif mitigated:
+                status = "mitigated"
+                validity = True
+            else:
+                status = "fresh"
+                validity = True
+
+            updated.append(OrderBlock(
+                index=ob.index,
+                timestamp=ob.timestamp,
+                ob_type=ob.ob_type,
+                top=ob.top,
+                bottom=ob.bottom,
+                creation_candle=ob.creation_candle,
+                mitigation_status=status,
+                touch_count=touch_count,
+                validity=validity,
+                strength=ob.strength,
+                volume_confirmed=ob.volume_confirmed,
+                max_age_candles=ob.max_age_candles,
+            ))
+
+        return updated
 
     # =================================================================
     # FAIR VALUE GAPS
@@ -1063,39 +1137,48 @@ class SMCEngine:
     # =================================================================
 
     def _detect_equal_levels(self, df: pd.DataFrame) -> Tuple[List[Dict], List[Dict]]:
-        """Detect equal highs and equal lows."""
+        """Detect equal highs and equal lows.
+        
+        FIX: Replaced O(n²) nested loop with vectorized approach.
+        Only groups truly equal price levels, capped at 50 results each
+        to prevent performance issues with 80+ symbols.
+        """
         equal_highs = []
         equal_lows = []
+        tol = self.config.liquidity_equal_tolerance
 
         lookback = min(100, len(df))
         recent = df.iloc[-lookback:]
+        highs = recent["high"].values
+        lows  = recent["low"].values
 
-        # Find equal highs
-        for i in range(len(recent)):
-            for j in range(i+1, len(recent)):
-                high_diff = abs(recent.iloc[i]["high"] - recent.iloc[j]["high"])
-                tolerance = recent.iloc[i]["high"] * self.config.liquidity_equal_tolerance
+        # Use sorted prices + adjacent comparison (O(n log n) instead of O(n²))
+        sorted_high_idx = highs.argsort()
+        sorted_highs    = highs[sorted_high_idx]
+        for k in range(len(sorted_highs) - 1):
+            if len(equal_highs) >= 50:
+                break
+            price = sorted_highs[k]
+            if abs(sorted_highs[k + 1] - price) <= price * tol:
+                equal_highs.append({
+                    "index_1": int(sorted_high_idx[k]),
+                    "index_2": int(sorted_high_idx[k + 1]),
+                    "price": float(price),
+                    "tolerance": float(price * tol),
+                })
 
-                if high_diff <= tolerance:
-                    equal_highs.append({
-                        "index_1": i,
-                        "index_2": j,
-                        "price": recent.iloc[i]["high"],
-                        "tolerance": tolerance,
-                    })
-
-        # Find equal lows
-        for i in range(len(recent)):
-            for j in range(i+1, len(recent)):
-                low_diff = abs(recent.iloc[i]["low"] - recent.iloc[j]["low"])
-                tolerance = recent.iloc[i]["low"] * self.config.liquidity_equal_tolerance
-
-                if low_diff <= tolerance:
-                    equal_lows.append({
-                        "index_1": i,
-                        "index_2": j,
-                        "price": recent.iloc[i]["low"],
-                        "tolerance": tolerance,
-                    })
+        sorted_low_idx = lows.argsort()
+        sorted_lows    = lows[sorted_low_idx]
+        for k in range(len(sorted_lows) - 1):
+            if len(equal_lows) >= 50:
+                break
+            price = sorted_lows[k]
+            if abs(sorted_lows[k + 1] - price) <= price * tol:
+                equal_lows.append({
+                    "index_1": int(sorted_low_idx[k]),
+                    "index_2": int(sorted_low_idx[k + 1]),
+                    "price": float(price),
+                    "tolerance": float(price * tol),
+                })
 
         return equal_highs, equal_lows

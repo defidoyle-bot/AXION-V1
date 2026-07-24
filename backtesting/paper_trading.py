@@ -96,6 +96,41 @@ class PaperTradingEngine:
         """Check if paper trading is enabled."""
         return self._enabled
 
+    # ── Data provider interface for Telegram command handlers ────────────────
+    def get_account_summary(self) -> dict:
+        """Return account summary for /status command."""
+        acct = self.account
+        return {
+            "balance": acct.balance,
+            "equity": acct.equity,
+            "total_pnl": acct.total_pnl,
+            "total_trades": acct.total_trades,
+            "winning_trades": acct.winning_trades,
+            "losing_trades": acct.losing_trades,
+            "win_rate": (acct.winning_trades / acct.total_trades * 100) if acct.total_trades else 0,
+            "open_trades": len(self._active_trades),
+            "max_drawdown": acct.max_drawdown,
+        }
+
+    def get_stats(self) -> dict:
+        """Return trading stats for /stats command."""
+        return self.get_account_summary()
+
+    def get_recent_signals(self, limit: int = 5) -> list:
+        """Return recent trade history for /signals command."""
+        trades = list(self._trade_history[-limit:])
+        result = []
+        for t in reversed(trades):
+            result.append({
+                "symbol": getattr(t, "symbol", ""),
+                "direction": getattr(t, "direction", ""),
+                "score": getattr(t, "score", 0),
+                "created_at": str(getattr(t, "opened_at", "")),
+                "status": str(getattr(t, "status", "")),
+                "pnl": getattr(t, "pnl", 0),
+            })
+        return result
+
     def get_account(self) -> PaperAccount:
         """Get current paper trading account."""
         return self.account
